@@ -288,21 +288,31 @@ export default function (pi: HookAPI) {
     // Wait for any in-flight checkpoint before loading
     if (pendingCheckpoint) await pendingCheckpoint;
 
-    const checkpoints = await loadAllCheckpoints(ctx.cwd);
-    const sorted = checkpoints.sort((a, b) => b.timestamp - a.timestamp);
+    const checkpoints = await loadAllCheckpoints(ctx.cwd, currentSessionId);
 
-    if (sorted.length === 0) {
-      ctx.ui.notify("No checkpoints available", "warning");
+    if (checkpoints.length === 0) {
+      ctx.ui.notify("No checkpoints available for this session", "warning");
       return undefined;
     }
 
-    // Find checkpoint closest to target entry
-    const targetEntry = event.entries[event.targetTurnIndex];
-    const targetTs = targetEntry?.timestamp
-      ? new Date(targetEntry.timestamp).getTime()
-      : Date.now();
-    const checkpoint =
-      sorted.filter((cp) => cp.timestamp >= targetTs).pop() || sorted[0];
+    // Calculate the turn number from entry index
+    // Turn N corresponds to the Nth user message (0-indexed)
+    // event.targetTurnIndex is an entry index, not a turn number
+    let targetTurn = 0;
+    for (let i = 0; i < event.targetTurnIndex; i++) {
+      const entry = event.entries[i];
+      if (entry && "message" in entry && entry.message?.role === "user") {
+        targetTurn++;
+      }
+    }
+
+    // Find checkpoint with matching turn number
+    const checkpoint = checkpoints.find((cp) => cp.turnIndex === targetTurn);
+
+    if (!checkpoint) {
+      ctx.ui.notify(`No checkpoint found for turn ${targetTurn}`, "warning");
+      return undefined;
+    }
 
     // Build menu options
     type Choice = "all" | "conv" | "code" | "oldest" | "cancel";
@@ -311,7 +321,7 @@ export default function (pi: HookAPI) {
       { label: "Conversation only (keep current files)", value: "conv" },
       { label: "Code only (restore files, keep conversation)", value: "code" },
     ];
-    if (sorted.length > 1) {
+    if (checkpoints.length > 1) {
       options.push({
         label: "Restore oldest checkpoint (keep conversation)",
         value: "oldest",
@@ -356,7 +366,11 @@ export default function (pi: HookAPI) {
     };
 
     if (selected === "oldest") {
-      await saveAndRestore(sorted[sorted.length - 1]);
+      // Find oldest checkpoint by timestamp
+      const oldest = checkpoints.reduce((a, b) =>
+        a.timestamp < b.timestamp ? a : b,
+      );
+      await saveAndRestore(oldest);
       return { skipConversationRestore: true };
     }
 
