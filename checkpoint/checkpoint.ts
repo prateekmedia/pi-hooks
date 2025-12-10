@@ -216,15 +216,13 @@ async function loadAllCheckpoints(
   sessionFilter?: string,
 ): Promise<CheckpointData[]> {
   const refs = await listCheckpointRefs(cwd);
-  const checkpoints: CheckpointData[] = [];
-
-  for (const refName of refs) {
-    const data = await loadCheckpointFromRef(cwd, refName);
-    if (data && (!sessionFilter || data.sessionId === sessionFilter)) {
-      checkpoints.push(data);
-    }
-  }
-  return checkpoints;
+  const results = await Promise.all(
+    refs.map((ref) => loadCheckpointFromRef(cwd, ref)),
+  );
+  return results.filter(
+    (cp): cp is CheckpointData =>
+      cp !== null && (!sessionFilter || cp.sessionId === sessionFilter),
+  );
 }
 
 async function getSessionIdFromFile(sessionFile: string): Promise<string> {
