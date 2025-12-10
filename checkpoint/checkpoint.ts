@@ -65,7 +65,13 @@ const isGitRepo = (cwd: string) =>
     .then(() => true)
     .catch(() => false);
 
-const getRepoRoot = (cwd: string) => git("rev-parse --show-toplevel", cwd);
+let cachedRepoRoot: string | null = null;
+const getRepoRoot = async (cwd: string) => {
+  if (!cachedRepoRoot) {
+    cachedRepoRoot = await git("rev-parse --show-toplevel", cwd);
+  }
+  return cachedRepoRoot;
+};
 
 // ============================================================================
 // Checkpoint operations
