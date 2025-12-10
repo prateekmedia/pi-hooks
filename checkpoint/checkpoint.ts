@@ -235,13 +235,25 @@ async function loadAllCheckpoints(
 const isSafeId = (id: string) => /^[\w-]+$/.test(id);
 
 async function getSessionIdFromFile(sessionFile: string): Promise<string> {
+  // First try to read from file content
   try {
     const content = await readFile(sessionFile, "utf-8");
-    const id = JSON.parse(content.split("\n")[0]).id || "";
-    return isSafeId(id) ? id : "";
+    if (content.trim()) {
+      const id = JSON.parse(content.split("\n")[0]).id || "";
+      if (isSafeId(id)) return id;
+    }
   } catch {
-    return "";
+    // Fall through to filename extraction
   }
+
+  // Fallback: extract session ID from filename (format: {timestamp}_{sessionId}.jsonl)
+  const basename = sessionFile.split("/").pop() || "";
+  const match = basename.match(/_([0-9a-f-]{36})\.jsonl$/);
+  if (match && isSafeId(match[1])) {
+    return match[1];
+  }
+
+  return "";
 }
 
 // ============================================================================
@@ -257,10 +269,16 @@ export default function (pi: HookAPI) {
 
   pi.on("session_start", async (event, ctx) => {
     gitAvailable = await isGitRepo(ctx.cwd);
+    console.error(
+      `[checkpoint] session_start: gitAvailable=${gitAvailable}, sessionFile=${ctx.sessionFile}`,
+    );
     if (!gitAvailable || !ctx.sessionFile) return;
 
     currentSessionFile = ctx.sessionFile;
     currentSessionId = await getSessionIdFromFile(ctx.sessionFile);
+    console.error(
+      `[checkpoint] session_start: currentSessionId=${currentSessionId}`,
+    );
   });
 
   pi.on("turn_start", async (event, ctx) => {
@@ -288,17 +306,43 @@ export default function (pi: HookAPI) {
     // Wait for any in-flight checkpoint before loading
     if (pendingCheckpoint) await pendingCheckpoint;
 
-    // Get session IDs to search (current + parent if branched)
-    const sessionIds = [currentSessionId];
-    const header = event.entries.find((e) => e.type === "session");
-    if (header && "branchedFrom" in header && header.branchedFrom) {
-      sessionIds.push(header.branchedFrom);
+    // Collect all session IDs in the branch chain (current + all ancestors)
+    const sessionIds: string[] = [];
+    const header = event.entries.find((e) => e.type === "session") as
+      | { type: "session"; id: string; branchedFrom?: string }
+      | undefined;
+
+    if (header?.id && isSafeId(header.id)) {
+      sessionIds.push(header.id);
     }
 
-    // Load checkpoints for current session and parent session (if branched)
+    // Walk the branchedFrom chain by reading parent session files
+    let branchedFrom = header?.branchedFrom;
+    while (branchedFrom) {
+      // Extract session ID from file path
+      const match = branchedFrom.match(/_([0-9a-f-]{36})\.jsonl$/);
+      if (match && isSafeId(match[1])) {
+        sessionIds.push(match[1]);
+      }
+      // Read parent session to continue chain
+      try {
+        const content = await readFile(branchedFrom, "utf-8");
+        const parentHeader = JSON.parse(content.split("\n")[0]);
+        branchedFrom = parentHeader.branchedFrom;
+      } catch {
+        break;
+      }
+    }
+
+    // Load checkpoints for all sessions in chain
     const checkpoints = (
       await Promise.all(sessionIds.map((id) => loadAllCheckpoints(ctx.cwd, id)))
     ).flat();
+
+    console.error(`[checkpoint] branch: sessionIds=${sessionIds.join(" → ")}`);
+    console.error(
+      `[checkpoint] branch: found ${checkpoints.length} checkpoints`,
+    );
 
     if (checkpoints.length === 0) {
       ctx.ui.notify("No checkpoints available", "warning");
@@ -323,19 +367,13 @@ export default function (pi: HookAPI) {
     });
 
     // Build menu options
-    type Choice = "all" | "conv" | "code" | "oldest" | "cancel";
+    type Choice = "all" | "conv" | "code" | "cancel";
     const options: { label: string; value: Choice }[] = [
       { label: "Restore all (files + conversation)", value: "all" },
       { label: "Conversation only (keep current files)", value: "conv" },
       { label: "Code only (restore files, keep conversation)", value: "code" },
+      { label: "Cancel", value: "cancel" },
     ];
-    if (checkpoints.length > 1) {
-      options.push({
-        label: "Restore oldest checkpoint (keep conversation)",
-        value: "oldest",
-      });
-    }
-    options.push({ label: "Cancel", value: "cancel" });
 
     const choice = await ctx.ui.select(
       "Restore code state?",
@@ -373,15 +411,6 @@ export default function (pi: HookAPI) {
       }
     };
 
-    if (selected === "oldest") {
-      // Find oldest checkpoint by timestamp
-      const oldest = checkpoints.reduce((a, b) =>
-        a.timestamp < b.timestamp ? a : b,
-      );
-      await saveAndRestore(oldest);
-      return { skipConversationRestore: true };
-    }
-
     if (selected === "code") {
       await saveAndRestore(checkpoint);
       return { skipConversationRestore: true };
@@ -393,9 +422,15 @@ export default function (pi: HookAPI) {
   });
 
   pi.on("session_switch", async (event, ctx) => {
+    console.error(
+      `[checkpoint] session_switch: reason=${event.reason}, newSessionFile=${event.newSessionFile}`,
+    );
     if (!gitAvailable) return;
     if (event.reason === "branch") {
       currentSessionId = await getSessionIdFromFile(event.newSessionFile);
+      console.error(
+        `[checkpoint] session_switch: updated currentSessionId=${currentSessionId}`,
+      );
     }
   });
 }
