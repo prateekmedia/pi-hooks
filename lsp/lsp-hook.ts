@@ -22,21 +22,8 @@ import type { Diagnostic } from "vscode-languageserver-types";
 // Configuration
 // ============================================================================
 
-const DEBUG = process.env.LSP_DEBUG === "1";
 const DIAGNOSTICS_TIMEOUT_MS = 5000;
 const INIT_TIMEOUT_MS = 30000;
-
-// Display limits
-const MAX_ERRORS_TO_DISPLAY = 10;
-const MAX_MESSAGE_LINES = 3;
-
-function log(...args: unknown[]) {
-  if (DEBUG) console.log("[LSP]", ...args);
-}
-
-function logError(...args: unknown[]) {
-  if (DEBUG) console.error("[LSP]", ...args);
-}
 
 // ============================================================================
 // Types
@@ -170,25 +157,6 @@ function prettyDiagnostic(d: Diagnostic): string {
   return `${severity} [${line}:${col}] ${d.message}`;
 }
 
-/** Format diagnostic for console display (truncate long messages) */
-function prettyDiagnosticForDisplay(d: Diagnostic): string {
-  const severityMap: Record<number, string> = { 1: "ERROR", 2: "WARN", 3: "INFO", 4: "HINT" };
-  const severity = severityMap[d.severity || 1];
-  const line = d.range.start.line + 1;
-  const col = d.range.start.character + 1;
-  
-  // Truncate message if too long
-  const msgLines = d.message.split('\n');
-  let msg: string;
-  if (msgLines.length > MAX_MESSAGE_LINES) {
-    msg = msgLines.slice(0, MAX_MESSAGE_LINES).join('\n') + `\n  ... +${msgLines.length - MAX_MESSAGE_LINES} lines`;
-  } else {
-    msg = d.message;
-  }
-  
-  return `${severity} [${line}:${col}] ${msg}`;
-}
-
 // ============================================================================
 // LSP Server Configurations
 // ============================================================================
@@ -222,12 +190,8 @@ const LSP_SERVERS: LSPServerConfig[] = [
         } catch { /* ignore */ }
       }
 
-      if (!dartBin) {
-        log("dart not found");
-        return undefined;
-      }
+      if (!dartBin) return undefined;
 
-      log(`Spawning dart: ${dartBin}`);
       return {
         process: spawn(dartBin, ["language-server", "--protocol=lsp"], {
           cwd: root,
@@ -249,11 +213,7 @@ const LSP_SERVERS: LSPServerConfig[] = [
     spawn: async (root) => {
       const localBin = path.join(root, "node_modules", ".bin", "typescript-language-server");
       const cmd = fs.existsSync(localBin) ? localBin : which("typescript-language-server");
-      if (!cmd) {
-        log("typescript-language-server not found");
-        return undefined;
-      }
-      log(`Spawning typescript: ${cmd}`);
+      if (!cmd) return undefined;
       return { process: spawn(cmd, ["--stdio"], { cwd: root, stdio: ["pipe", "pipe", "pipe"] }) };
     },
   },
@@ -265,8 +225,7 @@ const LSP_SERVERS: LSPServerConfig[] = [
     findRoot: async (file, cwd) => findRoot(file, cwd, ["package.json", "vite.config.ts", "vite.config.js"]),
     spawn: async (root) => {
       const cmd = which("vue-language-server");
-      if (!cmd) { log("vue-language-server not found"); return undefined; }
-      log(`Spawning vue: ${cmd}`);
+      if (!cmd) { return undefined; }
       return { process: spawn(cmd, ["--stdio"], { cwd: root, stdio: ["pipe", "pipe", "pipe"] }) };
     },
   },
@@ -278,8 +237,7 @@ const LSP_SERVERS: LSPServerConfig[] = [
     findRoot: async (file, cwd) => findRoot(file, cwd, ["package.json", "svelte.config.js"]),
     spawn: async (root) => {
       const cmd = which("svelteserver");
-      if (!cmd) { log("svelte-language-server not found"); return undefined; }
-      log(`Spawning svelte: ${cmd}`);
+      if (!cmd) { return undefined; }
       return { process: spawn(cmd, ["--stdio"], { cwd: root, stdio: ["pipe", "pipe", "pipe"] }) };
     },
   },
@@ -291,8 +249,7 @@ const LSP_SERVERS: LSPServerConfig[] = [
     findRoot: async (file, cwd) => findRoot(file, cwd, ["pyproject.toml", "setup.py", "requirements.txt", "pyrightconfig.json"]),
     spawn: async (root) => {
       const cmd = which("pyright-langserver");
-      if (!cmd) { log("pyright-langserver not found"); return undefined; }
-      log(`Spawning pyright: ${cmd}`);
+      if (!cmd) { return undefined; }
       return { process: spawn(cmd, ["--stdio"], { cwd: root, stdio: ["pipe", "pipe", "pipe"] }) };
     },
   },
@@ -308,8 +265,7 @@ const LSP_SERVERS: LSPServerConfig[] = [
     },
     spawn: async (root) => {
       const cmd = which("gopls");
-      if (!cmd) { log("gopls not found"); return undefined; }
-      log(`Spawning gopls: ${cmd}`);
+      if (!cmd) { return undefined; }
       return { process: spawn(cmd, [], { cwd: root, stdio: ["pipe", "pipe", "pipe"] }) };
     },
   },
@@ -321,8 +277,7 @@ const LSP_SERVERS: LSPServerConfig[] = [
     findRoot: async (file, cwd) => findRoot(file, cwd, ["Cargo.toml"]),
     spawn: async (root) => {
       const cmd = which("rust-analyzer");
-      if (!cmd) { log("rust-analyzer not found"); return undefined; }
-      log(`Spawning rust-analyzer: ${cmd}`);
+      if (!cmd) { return undefined; }
       return { process: spawn(cmd, [], { cwd: root, stdio: ["pipe", "pipe", "pipe"] }) };
     },
   },
@@ -340,7 +295,6 @@ class LSPManager {
 
   constructor(cwd: string) {
     this.cwd = cwd;
-    log(`LSPManager initialized for: ${cwd}`);
   }
 
   private getClientKey(serverId: string, root: string): string {
@@ -349,7 +303,6 @@ class LSPManager {
 
   private async initializeClient(config: LSPServerConfig, root: string): Promise<LSPClient | undefined> {
     const key = this.getClientKey(config.id, root);
-    log(`Initializing ${config.id} for: ${root}`);
 
     try {
       const handle = await config.spawn(root);
@@ -375,7 +328,6 @@ class LSPManager {
 
       connection.onNotification("textDocument/publishDiagnostics", (params: { uri: string; diagnostics: Diagnostic[] }) => {
         const filePath = decodeURIComponent(new URL(params.uri).pathname);
-        log(`Received ${params.diagnostics.length} diagnostics for: ${filePath}`);
         client.diagnostics.set(filePath, params.diagnostics);
 
         const listeners = client.diagnosticsListeners.get(filePath);
@@ -392,23 +344,19 @@ class LSPManager {
       connection.onRequest("workspace/workspaceFolders", () => [{ name: "workspace", uri: `file://${root}` }]);
 
       handle.process.stderr?.on("data", (data) => {
-        if (DEBUG) console.log(`[LSP:${config.id}:stderr] ${data.toString().trim()}`);
       });
 
       handle.process.on("exit", (code) => {
-        log(`${config.id} exited with code ${code}`);
         this.clients.delete(key);
       });
 
       handle.process.on("error", (err) => {
-        logError(`${config.id} error:`, err);
         this.clients.delete(key);
         this.broken.add(key);
       });
 
       connection.listen();
 
-      log(`Sending initialize to ${config.id}`);
       await withTimeout(
         connection.sendRequest("initialize", {
           rootUri: `file://${root}`,
@@ -429,7 +377,6 @@ class LSPManager {
       );
 
       await connection.sendNotification("initialized", {});
-      log(`${config.id} initialized`);
 
       if (handle.initializationOptions) {
         await connection.sendNotification("workspace/didChangeConfiguration", {
@@ -439,7 +386,6 @@ class LSPManager {
 
       return client;
     } catch (err) {
-      logError(`Failed to initialize ${config.id}:`, err);
       this.broken.add(key);
       return undefined;
     }
@@ -484,11 +430,9 @@ class LSPManager {
 
   async touchFile(filePath: string, waitForDiagnostics: boolean = true): Promise<void> {
     const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(this.cwd, filePath);
-    log(`touchFile: ${absPath}`);
 
     const clients = await this.getClientsForFile(absPath);
     if (clients.length === 0) {
-      log(`No LSP clients for: ${absPath}`);
       return;
     }
 
@@ -500,7 +444,6 @@ class LSPManager {
     try {
       content = fs.readFileSync(absPath, "utf-8");
     } catch (err) {
-      logError(`Failed to read: ${absPath}`, err);
       return;
     }
 
@@ -513,7 +456,6 @@ class LSPManager {
       if (waitForDiagnostics) {
         diagnosticsPromise = new Promise<void>((resolve) => {
           const timeoutId = setTimeout(() => {
-            log(`Diagnostics timeout for ${absPath}`);
             resolve();
           }, DIAGNOSTICS_TIMEOUT_MS);
 
@@ -532,7 +474,6 @@ class LSPManager {
           const newVersion = version + 1;
           client.openFiles.set(absPath, newVersion);
           client.diagnostics.delete(absPath);
-          log(`didChange: ${absPath} v${newVersion}`);
           await client.connection.sendNotification("textDocument/didChange", {
             textDocument: { uri, version: newVersion },
             contentChanges: [{ text: content }],
@@ -540,20 +481,16 @@ class LSPManager {
         } else {
           client.openFiles.set(absPath, 0);
           client.diagnostics.delete(absPath);
-          log(`didOpen: ${absPath}`);
           await client.connection.sendNotification("textDocument/didOpen", {
             textDocument: { uri, languageId, version: 0, text: content },
           });
         }
       } catch (err) {
-        logError(`Failed to notify about ${absPath}:`, err);
       }
     }
 
     if (waitForDiagnostics && diagnosticsPromises.length > 0) {
-      log(`Waiting for diagnostics...`);
       await Promise.all(diagnosticsPromises);
-      log(`Got diagnostics`);
     }
   }
 
@@ -571,7 +508,6 @@ class LSPManager {
   }
 
   async shutdown(): Promise<void> {
-    log("Shutting down LSP clients");
     for (const client of this.clients.values()) {
       try {
         await client.connection.sendRequest("shutdown");
@@ -609,7 +545,6 @@ export default function (pi: HookAPI) {
     const supported = LSP_SERVERS.some((s) => s.extensions.includes(ext));
     if (!supported) return;
 
-    log(`Processing ${event.toolName} for: ${filePath}`);
 
     try {
       await lspManager.touchFile(filePath, true);
@@ -660,11 +595,10 @@ export default function (pi: HookAPI) {
       }
 
       if (output) {
-        log(`Appending diagnostics to result`);
         return { result: event.result + output };
       }
-    } catch (err) {
-      logError("Error getting diagnostics:", err);
+    } catch {
+      // Ignore LSP errors silently
     }
 
     return undefined;
