@@ -356,20 +356,20 @@ async function startDiscordBot({ workingDir, sandbox }: { workingDir: string; sa
 			if (active) {
 				log.logStopRequest(logCtx);
 				await ctx.setTyping(true);
-				await ctx.replacePrimary(ctx.formatting.italic("Stopping..."));
+				await ctx.replaceResponse(ctx.formatting.italic("Stopping..."));
 				active.stopRequested = true;
 				active.stopContext = ctx;
 				active.runner.abort();
 			} else {
 				await ctx.setTyping(true);
-				await ctx.replacePrimary(ctx.formatting.italic("Nothing running."));
+				await ctx.replaceResponse(ctx.formatting.italic("Nothing running."));
 			}
 			return;
 		}
 
 		if (activeRuns.has(runnerKey)) {
 			await ctx.setTyping(true);
-			await ctx.replacePrimary(
+			await ctx.replaceResponse(
 				ctx.formatting.italic("Already working on something. Say `@mom stop` or use `/mom-stop`."),
 			);
 			return;
@@ -393,13 +393,13 @@ async function startDiscordBot({ workingDir, sandbox }: { workingDir: string; sa
 				if (active.stopContext) {
 					try {
 						await active.stopContext.setWorking(false);
-						await active.stopContext.replacePrimary(active.stopContext.formatting.italic("Stopped."));
+						await active.stopContext.replaceResponse(active.stopContext.formatting.italic("Stopped."));
 					} catch {
 						// ignore
 					}
 				}
 				try {
-					await ctx.replacePrimary(ctx.formatting.italic("Stopped."));
+					await ctx.replaceResponse(ctx.formatting.italic("Stopped."));
 				} catch {
 					// ignore
 				}
@@ -409,7 +409,7 @@ async function startDiscordBot({ workingDir, sandbox }: { workingDir: string; sa
 			try {
 				await ctx.setWorking(false);
 				await ctx.send(
-					"secondary",
+					"details",
 					ctx.formatting.italic(`Error: ${error instanceof Error ? error.message : String(error)}`),
 					{
 						log: false,
@@ -522,7 +522,7 @@ async function startDiscordBot({ workingDir, sandbox }: { workingDir: string; sa
 				const active = activeRuns.get(runnerKey);
 				if (result.stopReason === "aborted" && active?.stopRequested) {
 					try {
-						await ctx.replacePrimary(ctx.formatting.italic("Stopped."));
+						await ctx.replaceResponse(ctx.formatting.italic("Stopped."));
 					} catch {
 						// ignore
 					}

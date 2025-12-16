@@ -246,12 +246,9 @@ Avoid Slack mrkdwn link format (<url|text>).`;
 			? `When mentioning users, use <@username> format (e.g., <@mario>).`
 			: `When mentioning users, use <@USER_ID> format (e.g., <@1234567890>).`;
 
-	const silentGuide =
-		transport === "slack"
-			? `For periodic events where there's nothing to report, respond with just \`[SILENT]\` (no other text). This deletes the status message and posts nothing to Slack. Use this to avoid spamming the channel when periodic checks find nothing actionable.`
-			: `For periodic events where there's nothing to report, respond with just \`[SILENT]\` (no other text). This deletes the status message and posts nothing else. Use this to avoid spamming the channel when periodic checks find nothing actionable.`;
+	const silentGuide = `For periodic events where there's nothing to report, respond with just \`[SILENT]\` (no other text). This deletes the status message and posts nothing. Use this to avoid spamming the channel when periodic checks find nothing actionable.`;
 
-	return `You are mom, a ${transport === "slack" ? "Slack bot" : "Discord bot"} assistant. Be concise. No emojis.
+	return `You are mom, a bot assistant in a chat app. Be concise. No emojis.
 
 ## How to Respond
 Your text responses are automatically delivered to the channel. Do NOT try to send messages via curl, API calls, webhooks, or any other method. Just write your response as normal text output.
@@ -404,7 +401,7 @@ Format: \`{"date":"...","ts":"...","user":"...","userName":"...","text":"...","i
 	\`\`\`
 
 	## Tools
-	- bash: Run shell commands (primary tool). Install packages as needed.
+	- bash: Run shell commands (response tool). Install packages as needed.
 	- read: Read files
 	- write: Create/overwrite files
 	- edit: Surgical file edits
@@ -536,7 +533,7 @@ function createRunner(
 		logCtx: null as { channelId: string; userName?: string; channelName?: string; guildName?: string } | null,
 		queue: null as {
 			enqueue(fn: () => Promise<void>, errorContext: string): void;
-			enqueueMessage(text: string, target: "primary" | "secondary", errorContext: string, doLog?: boolean): void;
+			enqueueMessage(text: string, target: "response" | "details", errorContext: string, doLog?: boolean): void;
 		} | null,
 		pendingTools: new Map<string, { toolName: string; args: unknown; startTime: number }>(),
 		totalUsage: {
@@ -675,7 +672,10 @@ function createRunner(
 				});
 
 				log.logToolStart(logCtx, agentEvent.toolName, label, agentEvent.args as Record<string, unknown>);
-				queue.enqueue(() => ctx.send("primary", ctx.formatting.italic(`→ ${label}`), { log: false }), "tool label");
+				queue.enqueue(
+					() => ctx.send("response", ctx.formatting.italic(`→ ${label}`), { log: false }),
+					"tool label",
+				);
 				break;
 			}
 			case "tool_execution_end": {
@@ -715,13 +715,13 @@ function createRunner(
 					msg += ` (${durationSecs}s)\n`;
 					if (argsFormatted.trim()) msg += ctx.formatting.codeBlock(argsFormatted) + "\n";
 					msg += `${ctx.formatting.bold("Result:")}\n${ctx.formatting.codeBlock(resultStr)}`;
-					queue.enqueueMessage(msg, "secondary", "tool result", false);
+					queue.enqueueMessage(msg, "details", "tool result", false);
 				}
 
 				if (agentEvent.isError) {
 					queue.enqueue(
 						() =>
-							ctx.send("primary", ctx.formatting.italic(`Error: ${truncate(resultStr, 200)}`), { log: false }),
+							ctx.send("response", ctx.formatting.italic(`Error: ${truncate(resultStr, 200)}`), { log: false }),
 						"tool error",
 					);
 				}
@@ -772,19 +772,19 @@ function createRunner(
 
 				for (const thinking of thinkingParts) {
 					log.logThinking(logCtx, thinking);
-					queue.enqueueMessage(ctx.formatting.italic(thinking), "primary", "thinking primary");
+					queue.enqueueMessage(ctx.formatting.italic(thinking), "response", "thinking response");
 					if (ctx.transport === "slack") {
-						queue.enqueueMessage(ctx.formatting.italic(thinking), "secondary", "thinking secondary", false);
+						queue.enqueueMessage(ctx.formatting.italic(thinking), "details", "thinking details", false);
 					}
 				}
 
 				const text = textParts.join("\n");
 				if (text.trim()) {
 					log.logResponse(logCtx, text);
-					queue.enqueueMessage(text, "primary", "response primary");
-					// Slack uses threads for verbose output; Discord doesn't need secondary text (only tool embeds)
+					queue.enqueueMessage(text, "response", "text output");
+					// Slack uses threads for verbose output; Discord doesn't need details text (only tool embeds)
 					if (ctx.transport === "slack") {
-						queue.enqueueMessage(text, "secondary", "response secondary", false);
+						queue.enqueueMessage(text, "details", "response details", false);
 					}
 				}
 				break;
@@ -792,7 +792,7 @@ function createRunner(
 			case "auto_compaction_start": {
 				log.logInfo(`Auto-compaction started (reason: ${(event as any).reason})`);
 				queue.enqueue(
-					() => ctx.send("primary", ctx.formatting.italic("Compacting context..."), { log: false }),
+					() => ctx.send("response", ctx.formatting.italic("Compacting context..."), { log: false }),
 					"compaction start",
 				);
 				break;
@@ -812,7 +812,7 @@ function createRunner(
 				queue.enqueue(
 					() =>
 						ctx.send(
-							"primary",
+							"response",
 							ctx.formatting.italic(`Retrying (${retryEvent.attempt}/${retryEvent.maxAttempts})...`),
 							{ log: false },
 						),
@@ -901,14 +901,14 @@ function createRunner(
 							// cleanup/transport errors (e.g., stop-control removal on a deleted message).
 							if (wasSilent) return;
 							try {
-								await ctx.send("secondary", ctx.formatting.italic(`Error: ${errMsg}`), { log: false });
+								await ctx.send("details", ctx.formatting.italic(`Error: ${errMsg}`), { log: false });
 							} catch {
 								// Ignore
 							}
 						}
 					});
 				},
-				enqueueMessage(text: string, target: "primary" | "secondary", errorContext: string, doLog = true): void {
+				enqueueMessage(text: string, target: "response" | "details", errorContext: string, doLog = true): void {
 					this.enqueue(() => ctx.send(target, text, { log: doLog }), errorContext);
 				},
 			};
@@ -959,8 +959,8 @@ function createRunner(
 				// Handle error case - update main message and post error to thread
 				if (runState.stopReason === "error" && runState.errorMessage) {
 					try {
-						await ctx.replacePrimary(ctx.formatting.italic("Sorry, something went wrong"));
-						await ctx.send("secondary", ctx.formatting.italic(`Error: ${runState.errorMessage}`), { log: false });
+						await ctx.replaceResponse(ctx.formatting.italic("Sorry, something went wrong"));
+						await ctx.send("details", ctx.formatting.italic(`Error: ${runState.errorMessage}`), { log: false });
 					} catch (err) {
 						const errMsg = err instanceof Error ? err.message : String(err);
 						log.logWarning("Failed to post error message", errMsg);
@@ -978,7 +978,7 @@ function createRunner(
 					// Check for [SILENT] marker - delete message and thread instead of posting
 					if (finalText.trim() === "[SILENT]" || finalText.trim().startsWith("[SILENT]")) {
 						try {
-							await ctx.deletePrimaryAndSecondary();
+							await ctx.deleteResponseAndDetails();
 							wasSilent = true;
 							log.logInfo("Silent response - deleted message and thread");
 						} catch (err) {
@@ -987,7 +987,7 @@ function createRunner(
 						}
 					} else if (finalText.trim()) {
 						try {
-							await ctx.replacePrimary(finalText);
+							await ctx.replaceResponse(finalText);
 						} catch (err) {
 							const errMsg = err instanceof Error ? err.message : String(err);
 							log.logWarning("Failed to replace message with final text", errMsg);
@@ -1034,7 +1034,7 @@ function createRunner(
 								);
 							} else {
 								const text = formatterOutput.text || "*Usage Summary*";
-								runState.queue.enqueue(() => ctx.send("secondary", text, { log: false }), "usage summary");
+								runState.queue.enqueue(() => ctx.send("details", text, { log: false }), "usage summary");
 							}
 							await queueChain;
 							return { stopReason: runState.stopReason, errorMessage: runState.errorMessage };
@@ -1051,7 +1051,7 @@ function createRunner(
 							contextWindow,
 							usageSummarySettings,
 						);
-						runState.queue.enqueue(() => ctx.send("secondary", summary, { log: false }), "usage summary");
+						runState.queue.enqueue(() => ctx.send("details", summary, { log: false }), "usage summary");
 					}
 					await queueChain;
 				}

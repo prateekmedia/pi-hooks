@@ -2,7 +2,7 @@ import type { ResolvedUsageSummarySettings } from "../context.js";
 
 export type TransportName = "slack" | "discord";
 
-export type ReplyTarget = "primary" | "secondary";
+export type ReplyTarget = "response" | "details";
 
 export interface ChannelInfo {
 	id: string;
@@ -79,17 +79,17 @@ export interface TransportContext {
 	// Formatting + splitting owned by transport
 	formatting: TransportFormatting;
 	limits: {
-		primaryMaxChars: number;
-		secondaryMaxChars: number;
+		responseMaxChars: number;
+		detailsMaxChars: number;
 	};
 
 	// Messaging API
 	send(target: ReplyTarget, text: string, opts?: { log?: boolean }): Promise<void>;
-	replacePrimary(text: string): Promise<void>;
+	replaceResponse(text: string): Promise<void>;
 
 	setTyping(isTyping: boolean): Promise<void>;
 	setWorking(working: boolean): Promise<void>;
-	deletePrimaryAndSecondary(): Promise<void>;
+	deleteResponseAndDetails(): Promise<void>;
 
 	uploadFile(filePath: string, title?: string): Promise<void>;
 

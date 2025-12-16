@@ -1,4 +1,5 @@
 import type { AgentTool, TextContent } from "@mariozechner/pi-ai";
+import { StringEnum } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import type { DiscordProfileActivityType, DiscordProfileSettings, SlackProfileSettings } from "../context.js";
 import { MomSettingsManager } from "../context.js";
@@ -11,26 +12,16 @@ export interface ProfileRuntime {
 
 const profileSchema = Type.Object({
 	label: Type.String({ description: "Brief description shown to user" }),
-	transport: Type.Optional(Type.Union([Type.Literal("discord"), Type.Literal("slack")])),
+	transport: Type.Optional(StringEnum(["discord", "slack"])),
 
 	// Shared-ish
 	username: Type.Optional(Type.String({ description: "Bot display name (Discord/Slack)" })),
 
 	// Discord
 	avatar: Type.Optional(Type.String({ description: "Discord avatar URL or local path (Discord only)" })),
-	status: Type.Optional(
-		Type.Union([Type.Literal("online"), Type.Literal("idle"), Type.Literal("dnd"), Type.Literal("invisible")]),
-	),
+	status: Type.Optional(StringEnum(["online", "idle", "dnd", "invisible"])),
 	activityName: Type.Optional(Type.String({ description: "Discord activity name (Discord only)" })),
-	activityType: Type.Optional(
-		Type.Union([
-			Type.Literal("Playing"),
-			Type.Literal("Watching"),
-			Type.Literal("Listening"),
-			Type.Literal("Competing"),
-			Type.Literal("Streaming"),
-		]),
-	),
+	activityType: Type.Optional(StringEnum(["Playing", "Watching", "Listening", "Competing", "Streaming"])),
 
 	// Slack
 	iconUrl: Type.Optional(
@@ -45,12 +36,12 @@ const profileSchema = Type.Object({
 
 type ProfileArgs = {
 	label: string;
-	transport?: TransportName;
+	transport?: string;
 	username?: string;
 	avatar?: string;
-	status?: "online" | "idle" | "dnd" | "invisible";
+	status?: string;
 	activityName?: string;
-	activityType?: DiscordProfileActivityType;
+	activityType?: string;
 	iconUrl?: string;
 	iconEmoji?: string;
 };
@@ -74,7 +65,7 @@ export function createProfileTool(
 			const ctx = getCtx();
 			if (!ctx) throw new Error("No active transport context");
 
-			const targetTransport: TransportName = args.transport ?? ctx.transport;
+			const targetTransport = (args.transport ?? ctx.transport) as TransportName;
 			const runtime = getRuntime();
 			let settingsManager: MomSettingsManager;
 			if (cachedSettings?.workingDir === ctx.workingDir) {
@@ -96,11 +87,11 @@ export function createProfileTool(
 				const updates: Partial<DiscordProfileSettings> = {};
 				if (args.username !== undefined) updates.username = args.username;
 				if (args.avatar !== undefined) updates.avatar = args.avatar;
-				if (args.status !== undefined) updates.status = args.status;
+				if (args.status !== undefined) updates.status = args.status as "online" | "idle" | "dnd" | "invisible";
 				if (args.activityName) {
 					updates.activity = {
 						name: args.activityName,
-						type: args.activityType ?? "Playing",
+						type: (args.activityType ?? "Playing") as DiscordProfileActivityType,
 					};
 				}
 

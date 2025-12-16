@@ -7,7 +7,8 @@ By default, mom does not respond to direct messages. This prevents unauthorized 
 ## Security Model
 
 - DMs are **disabled by default**
-- To enable DMs, you must explicitly allow specific users
+- To enable DMs for everyone (private servers): set `allowDMs: true`
+- To restrict to specific users: set `allowDMs: true` with `dmAllowlist`
 - Unauthorized DMs are **silently ignored** (no response)
 - Message logging still occurs for unauthorized DMs
 
@@ -29,6 +30,14 @@ Without this, Discord blocks the DM at the platform level before it even reaches
 
 Add to `settings.json` in your workspace root:
 
+**Allow all DMs (private servers):**
+```json
+{
+  "allowDMs": true
+}
+```
+
+**Restrict to specific users:**
 ```json
 {
   "allowDMs": true,
@@ -39,11 +48,7 @@ Add to `settings.json` in your workspace root:
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `allowDMs` | boolean | `false` | Master switch for DM handling |
-| `dmAllowlist` | string[] | `[]` | User IDs allowed to DM |
-
-Both conditions must be met:
-1. `allowDMs: true`
-2. User ID is in `dmAllowlist`
+| `dmAllowlist` | string[] | `[]` | User IDs allowed to DM (empty = allow all)
 
 ---
 
@@ -90,7 +95,7 @@ The `dmAllowlist` works for both Slack and Discord. You can mix user IDs from bo
 | `allowDMs` | `dmAllowlist` | Result |
 |------------|---------------|--------|
 | `false` (default) | - | All DMs ignored |
-| `true` | `[]` or missing | All DMs ignored |
+| `true` | `[]` or missing | All DMs allowed |
 | `true` | `["U123"]` | Only U123 can DM |
 
 ---

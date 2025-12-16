@@ -568,11 +568,11 @@ export class MomDiscordBot {
 			channels: this.getChannels(),
 			users: this.getUsers(),
 			formatting,
-			limits: { primaryMaxChars: DISCORD_PRIMARY_MAX_CHARS, secondaryMaxChars: DISCORD_SECONDARY_MAX_CHARS },
+			limits: { responseMaxChars: DISCORD_PRIMARY_MAX_CHARS, detailsMaxChars: DISCORD_SECONDARY_MAX_CHARS },
 
 			send: async (target, content, opts) => {
 				const shouldLog = opts?.log ?? true;
-				if (target === "secondary") {
+				if (target === "details") {
 					await sendSecondary(content);
 					return;
 				}
@@ -590,7 +590,7 @@ export class MomDiscordBot {
 				await syncOverflowMessages(parts.slice(1));
 			},
 
-			replacePrimary: async (content) => {
+			replaceResponse: async (content) => {
 				accumulatedText = content;
 				const displayText = isWorking ? accumulatedText + workingIndicator : accumulatedText;
 				const parts = this.splitMessage(displayText, DISCORD_PRIMARY_MAX_CHARS);
@@ -623,7 +623,7 @@ export class MomDiscordBot {
 				}
 			},
 
-			deletePrimaryAndSecondary: async () => {
+			deleteResponseAndDetails: async () => {
 				// Delete thread first (this also deletes messages inside it)
 				if (toolThread) {
 					try {

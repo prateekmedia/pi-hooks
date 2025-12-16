@@ -2,22 +2,9 @@ import { existsSync, mkdirSync, readFileSync } from "fs";
 import { appendFile, writeFile } from "fs/promises";
 import { dirname, join, relative } from "path";
 import * as log from "../../log.js";
+import type { Attachment, LoggedMessage } from "../../store.js";
 
-export interface DiscordAttachment {
-	original: string;
-	local: string; // path relative to working dir (e.g., "discord/<guildId>/<channelId>/attachments/<file>")
-}
-
-export interface DiscordLoggedMessage {
-	date: string; // ISO 8601 date
-	ts: string; // Discord message ID (snowflake) or epoch ms
-	user: string; // user ID (or "bot" for bot responses)
-	userName?: string;
-	displayName?: string;
-	text: string;
-	attachments: DiscordAttachment[];
-	isBot: boolean;
-}
+export type { Attachment, LoggedMessage };
 
 export interface DiscordChannelStoreConfig {
 	workingDir: string;
@@ -65,8 +52,8 @@ export class DiscordChannelStore {
 		files: Array<{ name: string; url: string }>,
 		timestamp: string,
 		guildId?: string,
-	): DiscordAttachment[] {
-		const attachments: DiscordAttachment[] = [];
+	): Attachment[] {
+		const attachments: Attachment[] = [];
 		const channelDir = this.getChannelDir(channelId, guildId);
 
 		for (const file of files) {
@@ -88,9 +75,9 @@ export class DiscordChannelStore {
 		return attachments;
 	}
 
-	async logMessage(channelId: string, message: DiscordLoggedMessage, guildId?: string): Promise<boolean> {
+	async logMessage(channelId: string, message: LoggedMessage, guildId?: string): Promise<boolean> {
 		// Only dedupe user messages. For bot messages we intentionally allow repeated logs even if the message is edited
-		// (Discord "primary" output is typically an edited message, reusing the same messageId).
+		// (Discord "response" output is typically an edited message, reusing the same messageId).
 		if (!message.isBot) {
 			const dedupeKey = `${guildId || "dm"}:${channelId}:${message.ts}`;
 			if (this.recentlyLogged.has(dedupeKey)) return false;
@@ -129,7 +116,7 @@ export class DiscordChannelStore {
 			const lines = content.trim().split("\n");
 			if (lines.length === 0 || lines[0] === "") return null;
 			const lastLine = lines[lines.length - 1];
-			const message = JSON.parse(lastLine) as DiscordLoggedMessage;
+			const message = JSON.parse(lastLine) as LoggedMessage;
 			return message.ts;
 		} catch {
 			return null;

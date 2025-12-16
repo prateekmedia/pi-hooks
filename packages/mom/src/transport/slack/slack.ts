@@ -24,7 +24,7 @@ export function createSlackContext({
 	let updatePromise = Promise.resolve();
 	let primaryOverflowed = false;
 	const primaryMaxChars = 39000;
-	const secondaryMaxChars = 39000;
+	const detailsMaxChars = 39000;
 	const overflowSuffix = "\n\n_(continued in thread)_";
 
 	const user = slack.getUser(event.user);
@@ -56,7 +56,7 @@ export function createSlackContext({
 		if (!text.trim()) return;
 		await ensurePrimaryMessage();
 		if (!messageTs) return;
-		const parts = splitText(text, secondaryMaxChars);
+		const parts = splitText(text, detailsMaxChars);
 		for (const part of parts) {
 			const ts = await slack.postInThread(event.channel, messageTs, part);
 			threadMessageTs.push(ts);
@@ -105,13 +105,13 @@ export function createSlackContext({
 			codeBlock: (text: string) => `\`\`\`\n${text}\n\`\`\``,
 		},
 		limits: {
-			primaryMaxChars,
-			secondaryMaxChars,
+			responseMaxChars: primaryMaxChars,
+			detailsMaxChars,
 		},
 		send: async (target, text, opts) => {
 			const shouldLog = opts?.log ?? true;
 			updatePromise = updatePromise.then(async () => {
-				if (target === "secondary") {
+				if (target === "details") {
 					await postToThread(text);
 					return;
 				}
@@ -145,7 +145,7 @@ export function createSlackContext({
 			});
 			await updatePromise;
 		},
-		replacePrimary: async (text) => {
+		replaceResponse: async (text) => {
 			updatePromise = updatePromise.then(async () => {
 				accumulatedText = text;
 				primaryOverflowed = false;
@@ -184,7 +184,7 @@ export function createSlackContext({
 			});
 			await updatePromise;
 		},
-		deletePrimaryAndSecondary: async () => {
+		deleteResponseAndDetails: async () => {
 			updatePromise = updatePromise.then(async () => {
 				for (let i = threadMessageTs.length - 1; i >= 0; i--) {
 					try {

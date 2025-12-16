@@ -540,7 +540,7 @@ export class MomSettingsManager {
 	canUserDM(userId: string): boolean {
 		if (!this.settings.allowDMs) return false;
 		const allowlist = this.settings.dmAllowlist ?? [];
-		if (allowlist.length === 0) return false;
+		if (allowlist.length === 0) return true;
 		return allowlist.includes(userId);
 	}
 
