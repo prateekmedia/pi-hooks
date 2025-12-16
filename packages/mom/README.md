@@ -144,6 +144,18 @@ Create `settings.json` in your workspace directory to configure per-workspace de
 }
 ```
 
+### Available Settings
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `defaultProvider` | string | `"anthropic"` | LLM provider |
+| `defaultModel` | string | `"claude-sonnet-4-5"` | Model ID |
+| `showDetails` | boolean | `true` | Show details thread (tool results, usage summary, errors) |
+| `allowDMs` | boolean | `false` | Enable direct messages ([docs](docs/dm-authorization.md)) |
+| `dmAllowlist` | string[] | `[]` | Restrict DMs to specific user IDs |
+| `usageSummary` | boolean/object | `true` | Configure usage summary ([docs](docs/usage-summary.md)) |
+| `profile` | object | - | Bot profile settings ([docs](docs/bot-profile.md)) |
+
 ## Environment Variables
 
 | Variable | Description |

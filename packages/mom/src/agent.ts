@@ -728,15 +728,17 @@ function createRunner(
 					durationSecs,
 				};
 
-				if (ctx.sendToolResult) {
-					queue.enqueue(() => ctx.sendToolResult!(payload), "tool result");
-				} else {
-					let msg = `${ctx.formatting.bold(`${agentEvent.isError ? "✗" : "✓"} ${agentEvent.toolName}`)}`;
-					if (label) msg += `: ${label}`;
-					msg += ` (${durationSecs}s)\n`;
-					if (argsFormatted.trim()) msg += ctx.formatting.codeBlock(argsFormatted) + "\n";
-					msg += `${ctx.formatting.bold("Result:")}\n${ctx.formatting.codeBlock(resultStr)}`;
-					queue.enqueueMessage(msg, "details", "tool result", false);
+				if (ctx.showDetails) {
+					if (ctx.sendToolResult) {
+						queue.enqueue(() => ctx.sendToolResult!(payload), "tool result");
+					} else {
+						let msg = `${ctx.formatting.bold(`${agentEvent.isError ? "✗" : "✓"} ${agentEvent.toolName}`)}`;
+						if (label) msg += `: ${label}`;
+						msg += ` (${durationSecs}s)\n`;
+						if (argsFormatted.trim()) msg += ctx.formatting.codeBlock(argsFormatted) + "\n";
+						msg += `${ctx.formatting.bold("Result:")}\n${ctx.formatting.codeBlock(resultStr)}`;
+						queue.enqueueMessage(msg, "details", "tool result", false);
+					}
 				}
 
 				if (agentEvent.isError) {
@@ -794,7 +796,7 @@ function createRunner(
 				for (const thinking of thinkingParts) {
 					log.logThinking(logCtx, thinking);
 					queue.enqueueMessage(ctx.formatting.italic(thinking), "response", "thinking response");
-					if (ctx.transport === "slack") {
+					if (ctx.transport === "slack" && ctx.showDetails) {
 						queue.enqueueMessage(ctx.formatting.italic(thinking), "details", "thinking details", false);
 					}
 				}
@@ -803,7 +805,7 @@ function createRunner(
 				if (text.trim()) {
 					log.logResponse(logCtx, text);
 					queue.enqueueMessage(text, "response", "text output");
-					if (ctx.duplicateResponseToDetails) {
+					if (ctx.duplicateResponseToDetails && ctx.showDetails) {
 						queue.enqueueMessage(text, "details", "response details", false);
 					}
 				}
@@ -920,10 +922,12 @@ function createRunner(
 							// If the run ended with [SILENT], avoid creating new messages as a side effect of
 							// cleanup/transport errors (e.g., stop-control removal on a deleted message).
 							if (wasSilent) return;
-							try {
-								await ctx.send("details", ctx.formatting.italic(`Error: ${errMsg}`), { log: false });
-							} catch {
-								// Ignore
+							if (ctx.showDetails) {
+								try {
+									await ctx.send("details", ctx.formatting.italic(`Error: ${errMsg}`), { log: false });
+								} catch {
+									// Ignore
+								}
 							}
 						}
 					});
@@ -984,7 +988,11 @@ function createRunner(
 				if (runState.stopReason === "error" && runState.errorMessage) {
 					try {
 						await ctx.replaceResponse(ctx.formatting.italic("Sorry, something went wrong"));
-						await ctx.send("details", ctx.formatting.italic(`Error: ${runState.errorMessage}`), { log: false });
+						if (ctx.showDetails) {
+							await ctx.send("details", ctx.formatting.italic(`Error: ${runState.errorMessage}`), {
+								log: false,
+							});
+						}
 					} catch (err) {
 						const errMsg = err instanceof Error ? err.message : String(err);
 						log.logWarning("Failed to post error message", errMsg);
@@ -1047,37 +1055,42 @@ function createRunner(
 						cost: runState.totalUsage.cost,
 					};
 
-					// Check for custom formatter script
-					if (usageSummarySettings.formatter) {
-						const formatterOutput = runFormatter(usageSummarySettings.formatter, workingDir, usageData);
-						if (formatterOutput) {
-							if (ctx.sendUsageSummary) {
-								runState.queue.enqueue(
-									() => ctx.sendUsageSummary!(usageData, usageSummarySettings, formatterOutput),
-									"usage summary",
-								);
-							} else {
-								const text = formatterOutput.text || "*Usage Summary*";
-								runState.queue.enqueue(() => ctx.send("details", text, { log: false }), "usage summary");
+					if (ctx.showDetails) {
+						// Check for custom formatter script
+						if (usageSummarySettings.formatter) {
+							const formatterOutput = runFormatter(usageSummarySettings.formatter, workingDir, usageData);
+							if (formatterOutput) {
+								if (ctx.sendUsageSummary) {
+									runState.queue.enqueue(
+										() => ctx.sendUsageSummary!(usageData, usageSummarySettings, formatterOutput),
+										"usage summary",
+									);
+								} else {
+									const text = formatterOutput.text || "*Usage Summary*";
+									runState.queue.enqueue(() => ctx.send("details", text, { log: false }), "usage summary");
+								}
+								await queueChain;
+								return { stopReason: runState.stopReason, errorMessage: runState.errorMessage };
 							}
-							await queueChain;
-							return { stopReason: runState.stopReason, errorMessage: runState.errorMessage };
+							// Formatter failed, fall through to template system
 						}
-						// Formatter failed, fall through to template system
-					}
 
-					if (ctx.sendUsageSummary) {
-						runState.queue.enqueue(() => ctx.sendUsageSummary!(usageData, usageSummarySettings), "usage summary");
-					} else {
-						const summary = formatUsageSummaryText(
-							runState.totalUsage,
-							contextTokens,
-							contextWindow,
-							usageSummarySettings,
-						);
-						runState.queue.enqueue(() => ctx.send("details", summary, { log: false }), "usage summary");
+						if (ctx.sendUsageSummary) {
+							runState.queue.enqueue(
+								() => ctx.sendUsageSummary!(usageData, usageSummarySettings),
+								"usage summary",
+							);
+						} else {
+							const summary = formatUsageSummaryText(
+								runState.totalUsage,
+								contextTokens,
+								contextWindow,
+								usageSummarySettings,
+							);
+							runState.queue.enqueue(() => ctx.send("details", summary, { log: false }), "usage summary");
+						}
+						await queueChain;
 					}
-					await queueChain;
 				}
 
 				result = { stopReason: runState.stopReason, errorMessage: runState.errorMessage };

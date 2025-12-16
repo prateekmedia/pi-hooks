@@ -7,6 +7,7 @@ export interface CreateSlackContextArgs {
 	event: SlackEvent;
 	slack: SlackBot;
 	isEvent?: boolean;
+	showDetails?: boolean;
 }
 
 export function createSlackContext({
@@ -15,6 +16,7 @@ export function createSlackContext({
 	event,
 	slack,
 	isEvent,
+	showDetails = true,
 }: CreateSlackContextArgs): TransportContext {
 	let messageTs: string | null = null;
 	const threadMessageTs: string[] = [];
@@ -110,6 +112,7 @@ export function createSlackContext({
 			detailsMaxChars,
 		},
 		duplicateResponseToDetails: true,
+		showDetails,
 		send: async (target, text, opts) => {
 			const shouldLog = opts?.log ?? true;
 			updatePromise = updatePromise.then(async () => {

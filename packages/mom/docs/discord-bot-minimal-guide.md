@@ -110,9 +110,15 @@ Create `settings.json` in your workspace directory:
 {
   "defaultModel": "claude-sonnet-4-20250514",
   "defaultThinkingLevel": "off",
-  "usageSummary": true
+  "usageSummary": true,
+  "showDetails": true
 }
 ```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `showDetails` | `true` | Show "Details" thread with tool results, usage summary, and errors |
+| `usageSummary` | `true` | Show usage stats (requires `showDetails: true` to display) |
 
 ### Bot Profile (Optional)
 

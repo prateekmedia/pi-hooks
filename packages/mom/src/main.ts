@@ -274,6 +274,7 @@ async function startSlackBot({ workingDir, sandbox }: { workingDir: string; sand
 					event,
 					slack,
 					isEvent,
+					showDetails: settingsManager.showDetails,
 				});
 
 				await ctx.setTyping(true);

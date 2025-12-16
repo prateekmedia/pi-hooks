@@ -347,6 +347,7 @@ export interface MomSettings {
 	profile?: BotProfileSettings;
 	allowDMs?: boolean;
 	dmAllowlist?: string[];
+	showDetails?: boolean;
 }
 
 const DEFAULT_COMPACTION: MomCompactionSettings = {
@@ -542,6 +543,10 @@ export class MomSettingsManager {
 		const allowlist = this.settings.dmAllowlist ?? [];
 		if (allowlist.length === 0) return true;
 		return allowlist.includes(userId);
+	}
+
+	get showDetails(): boolean {
+		return this.settings.showDetails ?? true;
 	}
 
 	setDiscordProfile(profile: Partial<DiscordProfileSettings>): void {
