@@ -9,10 +9,14 @@ Minimal reference hooks for [`pi-coding-agent`](https://www.npmjs.com/package/@m
 - Stores checkpoints as Git refs so you can restore code when branching conversations
 - Automatically saves the current worktree before restoring past snapshots
 
+![Checkpoint Hook](assets/checkpoint-screenshot.png)
+
 ### `lsp/lsp-hook.ts`
 - Runs Language Server Protocol (LSP) diagnostics after each `write`/`edit`
 - Supports web, Flutter, and common backend stacks via the servers configured in the hook
 - Manages LSP server lifecycles per project root for responsive feedback
+
+![LSP Hook](assets/lsp-screenshot.png)
 
 ## Usage
 1. Install dependencies inside each hook directory (`npm install`).

@@ -1,0 +1,6 @@
+name: lsp_test_example
+description: Test project for LSP hook
+version: 1.0.0
+
+environment:
+  sdk: ^3.0.0
