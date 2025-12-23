@@ -195,14 +195,11 @@ async function restoreCheckpoint(
   cwd: string,
   cp: CheckpointData,
 ): Promise<void> {
-  if (cp.headSha === ZEROS) {
-    throw new Error("Cannot restore: checkpoint was saved with no commits");
-  }
-
   const root = await getRepoRoot(cwd);
-  // Clean untracked files first (respects .gitignore)
   await git("clean -fd", root);
-  await git(`reset --hard ${cp.headSha}`, root);
+  if (cp.headSha !== ZEROS) {
+    await git(`reset --hard ${cp.headSha}`, root);
+  }
   await git(`read-tree --reset ${cp.worktreeTreeSha}`, root);
   await git("checkout-index -a -f", root);
   await git(`read-tree --reset ${cp.indexTreeSha}`, root);
@@ -254,7 +251,7 @@ async function listCheckpointRefs(cwd: string, lowPriority = false): Promise<str
     const prefix = `${REF_BASE}/`;
     const gitFn = lowPriority ? gitLowPriority : git;
     const stdout = await gitFn(
-      `for-each-ref --format=%(refname) ${prefix}`,
+      `for-each-ref --format="%(refname)" ${prefix}`,
       root,
     );
     return stdout
@@ -402,18 +399,18 @@ export default function (pi: HookAPI) {
             sessionIds.push(header.id);
           }
 
-          // Extract session IDs from branchedFrom chain - batch process with single grep
+          // Extract session IDs from all session files in directory
           if (header?.branchedFrom) {
             const sessionDir = header.branchedFrom.substring(
               0,
               header.branchedFrom.lastIndexOf("/"),
             );
             try {
-              // Use a single grep to find all branchedFrom references across session files
+              // Read session IDs from file content (first line JSON)
               const { stdout } = await new Promise<{ stdout: string }>(
                 (resolve) => {
                   exec(
-                    `grep -h '"branchedFrom"' "${sessionDir}"/*.jsonl 2>/dev/null | grep -o '_[0-9a-f-]\\{36\\}\\.jsonl' | sed 's/_//;s/\\.jsonl//' | sort -u`,
+                    `for f in "${sessionDir}"/*.jsonl; do head -1 "$f" 2>/dev/null | grep -o '"id":"[^"]*"' | cut -d'"' -f4; done | sort -u`,
                     { maxBuffer: 1024 * 1024 },
                     (err, stdout) => resolve({ stdout: stdout || "" }),
                   );
@@ -436,6 +433,7 @@ export default function (pi: HookAPI) {
           const needsRefresh = sessionIds.some((id) => !cacheSessionIds.has(id));
 
           if (checkpointCache && !needsRefresh) {
+            if (!header?.branchedFrom) return checkpointCache;
             const sessionSet = new Set(sessionIds);
             return checkpointCache.filter((cp) => sessionSet.has(cp.sessionId));
           }
@@ -446,7 +444,7 @@ export default function (pi: HookAPI) {
           cacheSessionIds = new Set(allCheckpoints.map((cp) => cp.sessionId));
 
           const sessionSet = new Set(sessionIds);
-          return sessionIds.length > 0
+          return header?.branchedFrom
             ? allCheckpoints.filter((cp) => sessionSet.has(cp.sessionId))
             : allCheckpoints;
         })();
