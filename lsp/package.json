@@ -21,7 +21,7 @@
   "license": "MIT",
   "type": "module",
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "^0.18.2",
+    "@mariozechner/pi-coding-agent": "^0.27.2",
     "vscode-jsonrpc": "^8.2.1",
     "vscode-languageserver-types": "^3.17.5"
   },

@@ -16,6 +16,7 @@
  */
 
 import type { HookAPI } from "@mariozechner/pi-coding-agent/hooks";
+import type { SessionHeader } from "@mariozechner/pi-coding-agent";
 import { exec, spawn } from "child_process";
 import { mkdtemp, rm, readFile } from "fs/promises";
 import { tmpdir } from "os";
@@ -306,7 +307,7 @@ async function loadAllCheckpoints(
 const isSafeId = (id: string) => /^[\w-]+$/.test(id);
 
 async function getSessionIdFromFile(sessionFile: string): Promise<string> {
-  // First try to read from file content
+  // First try to read from file content (first line is session header)
   try {
     const content = await readFile(sessionFile, "utf-8");
     if (content.trim()) {
@@ -337,35 +338,193 @@ export default function (pi: HookAPI) {
   let checkpointingFailed = false;
   let currentSessionId = "";
   let currentSessionFile = "";
-  
+
   // Cache for checkpoints - avoids re-fetching on every branch click
   let checkpointCache: CheckpointData[] | null = null;
   let cacheSessionIds: Set<string> = new Set();
 
   pi.on("session", async (event, ctx) => {
     switch (event.reason) {
-      case "start":
+      case "start": {
         gitAvailable = await isGitRepo(ctx.cwd);
         if (!gitAvailable || !ctx.sessionFile) return;
 
         currentSessionFile = ctx.sessionFile;
-        currentSessionId = await getSessionIdFromFile(ctx.sessionFile);
-        
+        // Get session ID from event.entries (no file read needed)
+        const startHeader = event.entries.find((e) => e.type === "session") as SessionHeader | undefined;
+        currentSessionId = startHeader?.id && isSafeId(startHeader.id) ? startHeader.id : "";
+
         // Defer checkpoint loading to not block initial rendering
         // Use setImmediate to let the event loop process UI first
         setImmediate(() => {
           // Use low-priority loading with batching and yields
-          loadAllCheckpoints(ctx.cwd, undefined, true).then((cps) => {
-            checkpointCache = cps;
-            cacheSessionIds = new Set(cps.map((cp) => cp.sessionId));
-          }).catch(() => {});
+          loadAllCheckpoints(ctx.cwd, undefined, true)
+            .then((cps) => {
+              checkpointCache = cps;
+              cacheSessionIds = new Set(cps.map((cp) => cp.sessionId));
+            })
+            .catch(() => {});
         });
-        break;
-        
-      case "switch":
+        return;
+      }
+
+      case "switch": {
         if (!gitAvailable || !ctx.sessionFile) return;
-        currentSessionId = await getSessionIdFromFile(ctx.sessionFile);
-        break;
+        // Get session ID from event.entries (no file read needed)
+        const switchHeader = event.entries.find((e) => e.type === "session") as SessionHeader | undefined;
+        currentSessionId = switchHeader?.id && isSafeId(switchHeader.id) ? switchHeader.id : "";
+        return;
+      }
+
+      case "before_branch": {
+        // Handle checkpoint restoration when branching
+        if (!gitAvailable) return undefined;
+
+        // Show menu immediately while loading checkpoints in parallel
+        type Choice = "all" | "conv" | "code" | "cancel";
+        const options: { label: string; value: Choice }[] = [
+          { label: "Restore all (files + conversation)", value: "all" },
+          { label: "Conversation only (keep current files)", value: "conv" },
+          { label: "Code only (restore files, keep conversation)", value: "code" },
+          { label: "Cancel", value: "cancel" },
+        ];
+
+        // Start checkpoint loading in background while showing menu
+        const checkpointLoadPromise = (async () => {
+          // Wait for any in-flight checkpoint
+          if (pendingCheckpoint) await pendingCheckpoint;
+
+          // Collect session IDs from the branch chain using event.entries
+          const sessionIds: string[] = [];
+          const header = event.entries.find((e) => e.type === "session") as SessionHeader | undefined;
+
+          if (header?.id && isSafeId(header.id)) {
+            sessionIds.push(header.id);
+          }
+
+          // Extract session IDs from branchedFrom chain - batch process with single grep
+          if (header?.branchedFrom) {
+            const sessionDir = header.branchedFrom.substring(
+              0,
+              header.branchedFrom.lastIndexOf("/"),
+            );
+            try {
+              // Use a single grep to find all branchedFrom references across session files
+              const { stdout } = await new Promise<{ stdout: string }>(
+                (resolve) => {
+                  exec(
+                    `grep -h '"branchedFrom"' "${sessionDir}"/*.jsonl 2>/dev/null | grep -o '_[0-9a-f-]\\{36\\}\\.jsonl' | sed 's/_//;s/\\.jsonl//' | sort -u`,
+                    { maxBuffer: 1024 * 1024 },
+                    (err, stdout) => resolve({ stdout: stdout || "" }),
+                  );
+                },
+              );
+              stdout
+                .split("\n")
+                .filter(Boolean)
+                .forEach((id) => {
+                  if (isSafeId(id) && !sessionIds.includes(id)) {
+                    sessionIds.push(id);
+                  }
+                });
+            } catch {
+              // Ignore grep errors
+            }
+          }
+
+          // Use cache if available and contains all needed sessions
+          const needsRefresh = sessionIds.some((id) => !cacheSessionIds.has(id));
+
+          if (checkpointCache && !needsRefresh) {
+            const sessionSet = new Set(sessionIds);
+            return checkpointCache.filter((cp) => sessionSet.has(cp.sessionId));
+          }
+
+          // Load fresh checkpoints (filter by session if we have IDs, else load all)
+          const allCheckpoints = await loadAllCheckpoints(ctx.cwd);
+          checkpointCache = allCheckpoints;
+          cacheSessionIds = new Set(allCheckpoints.map((cp) => cp.sessionId));
+
+          const sessionSet = new Set(sessionIds);
+          return sessionIds.length > 0
+            ? allCheckpoints.filter((cp) => sessionSet.has(cp.sessionId))
+            : allCheckpoints;
+        })();
+
+        // Show menu immediately - don't wait for checkpoint loading
+        const choice = await ctx.ui.select(
+          "Restore code state?",
+          options.map((o) => o.label),
+        );
+
+        const selected = options.find((o) => o.label === choice)?.value ?? "cancel";
+
+        if (selected === "cancel") {
+          return { cancel: true };
+        }
+        // "conv" - let default branch behavior restore conversation, don't touch files
+        if (selected === "conv") {
+          return undefined;
+        }
+
+        // Now we need checkpoints - wait for loading to complete
+        const checkpoints = await checkpointLoadPromise;
+
+        if (checkpoints.length === 0) {
+          ctx.ui.notify("No checkpoints available", "warning");
+          return selected === "code" ? { skipConversationRestore: true } : undefined;
+        }
+
+        // Get target entry timestamp and find checkpoint with closest matching timestamp
+        const targetEntry = event.entries[event.targetTurnIndex];
+        const targetTs =
+          targetEntry && "timestamp" in targetEntry
+            ? new Date(targetEntry.timestamp).getTime()
+            : Date.now();
+
+        // Find checkpoint with timestamp closest to target (prefer slightly before)
+        const checkpoint = checkpoints.reduce((best, cp) => {
+          const bestDiff = Math.abs(best.timestamp - targetTs);
+          const cpDiff = Math.abs(cp.timestamp - targetTs);
+          // Prefer checkpoint that's before or equal to target
+          if (cp.timestamp <= targetTs && best.timestamp > targetTs) return cp;
+          if (best.timestamp <= targetTs && cp.timestamp > targetTs) return best;
+          return cpDiff < bestDiff ? cp : best;
+        });
+
+        const saveAndRestore = async (target: CheckpointData) => {
+          try {
+            const beforeId = `${currentSessionId}-before-restore-${Date.now()}`;
+            const newCp = await createCheckpoint(
+              ctx.cwd,
+              beforeId,
+              event.targetTurnIndex,
+              currentSessionId,
+            );
+            // Update cache
+            if (checkpointCache) {
+              checkpointCache.push(newCp);
+              cacheSessionIds.add(newCp.sessionId);
+            }
+            await restoreCheckpoint(ctx.cwd, target);
+            ctx.ui.notify("Files restored to checkpoint", "info");
+          } catch (error) {
+            ctx.ui.notify(
+              `Restore failed: ${error instanceof Error ? error.message : String(error)}`,
+              "error",
+            );
+          }
+        };
+
+        if (selected === "code") {
+          await saveAndRestore(checkpoint);
+          return { skipConversationRestore: true };
+        }
+
+        // "all" - restore files and let conversation restore happen
+        await saveAndRestore(checkpoint);
+        return undefined;
+      }
     }
   });
 
@@ -392,166 +551,4 @@ export default function (pi: HookAPI) {
       }
     })();
   });
-
-  pi.on("branch", async (event, ctx) => {
-    if (!gitAvailable) return undefined;
-
-    // Show menu immediately while loading checkpoints in parallel
-    type Choice = "all" | "conv" | "code" | "cancel";
-    const options: { label: string; value: Choice }[] = [
-      { label: "Restore all (files + conversation)", value: "all" },
-      { label: "Conversation only (keep current files)", value: "conv" },
-      { label: "Code only (restore files, keep conversation)", value: "code" },
-      { label: "Cancel", value: "cancel" },
-    ];
-
-    // Start checkpoint loading in background while showing menu
-    const checkpointLoadPromise = (async () => {
-      // Wait for any in-flight checkpoint
-      if (pendingCheckpoint) await pendingCheckpoint;
-      
-      // Collect session IDs from the branch chain
-      const sessionIds: string[] = [];
-      const header = event.entries.find((e) => e.type === "session") as
-        | { type: "session"; id: string; branchedFrom?: string }
-        | undefined;
-
-      if (header?.id && isSafeId(header.id)) {
-        sessionIds.push(header.id);
-      }
-
-      // Extract session IDs from branchedFrom chain - batch process with single grep
-      if (header?.branchedFrom) {
-        const sessionDir = header.branchedFrom.substring(0, header.branchedFrom.lastIndexOf("/"));
-        try {
-          // Use a single grep to find all branchedFrom references across session files
-          const { stdout } = await new Promise<{ stdout: string }>((resolve, reject) => {
-            exec(
-              `grep -h '"branchedFrom"' "${sessionDir}"/*.jsonl 2>/dev/null | grep -o '_[0-9a-f-]\\{36\\}\\.jsonl' | sed 's/_//;s/\\.jsonl//' | sort -u`,
-              { maxBuffer: 1024 * 1024 },
-              (err, stdout) => resolve({ stdout: stdout || "" }),
-            );
-          });
-          stdout.split("\n").filter(Boolean).forEach((id) => {
-            if (isSafeId(id) && !sessionIds.includes(id)) {
-              sessionIds.push(id);
-            }
-          });
-        } catch {
-          // Fall back to walking chain if grep fails
-          let branchedFrom: string | undefined = header.branchedFrom;
-          while (branchedFrom) {
-            const match = branchedFrom.match(/_([0-9a-f-]{36})\.jsonl$/);
-            if (match && isSafeId(match[1]) && !sessionIds.includes(match[1])) {
-              sessionIds.push(match[1]);
-            }
-            try {
-              const { stdout } = await new Promise<{ stdout: string }>((resolve, reject) => {
-                exec(
-                  `head -1 "${branchedFrom}" | grep -o '"branchedFrom":"[^"]*"' | cut -d'"' -f4`,
-                  (err, stdout) => (err ? reject(err) : resolve({ stdout })),
-                );
-              });
-              branchedFrom = stdout.trim() || undefined;
-            } catch {
-              break;
-            }
-          }
-        }
-      }
-
-      // Use cache if available and contains all needed sessions
-      const needsRefresh = sessionIds.some((id) => !cacheSessionIds.has(id));
-      
-      if (checkpointCache && !needsRefresh) {
-        const sessionSet = new Set(sessionIds);
-        return checkpointCache.filter((cp) => sessionSet.has(cp.sessionId));
-      }
-
-      // Load fresh checkpoints (filter by session if we have IDs, else load all)
-      const allCheckpoints = await loadAllCheckpoints(ctx.cwd);
-      checkpointCache = allCheckpoints;
-      cacheSessionIds = new Set(allCheckpoints.map((cp) => cp.sessionId));
-      
-      const sessionSet = new Set(sessionIds);
-      return sessionIds.length > 0
-        ? allCheckpoints.filter((cp) => sessionSet.has(cp.sessionId))
-        : allCheckpoints;
-    })();
-
-    // Show menu immediately - don't wait for checkpoint loading
-    const choice = await ctx.ui.select(
-      "Restore code state?",
-      options.map((o) => o.label),
-    );
-
-    const selected = options.find((o) => o.label === choice)?.value ?? "cancel";
-
-    if (selected === "cancel") {
-      return { skipConversationRestore: true };
-    }
-    // "conv" - let default branch behavior restore conversation, don't touch files
-    if (selected === "conv") {
-      return undefined;
-    }
-
-    // Now we need checkpoints - wait for loading to complete
-    const checkpoints = await checkpointLoadPromise;
-
-    if (checkpoints.length === 0) {
-      ctx.ui.notify("No checkpoints available", "warning");
-      return selected === "code" ? { skipConversationRestore: true } : undefined;
-    }
-
-    // Get target entry timestamp and find checkpoint with closest matching timestamp
-    const targetEntry = event.entries[event.targetTurnIndex];
-    const targetTs =
-      targetEntry && "timestamp" in targetEntry
-        ? new Date(targetEntry.timestamp).getTime()
-        : Date.now();
-
-    // Find checkpoint with timestamp closest to target (prefer slightly before)
-    const checkpoint = checkpoints.reduce((best, cp) => {
-      const bestDiff = Math.abs(best.timestamp - targetTs);
-      const cpDiff = Math.abs(cp.timestamp - targetTs);
-      // Prefer checkpoint that's before or equal to target
-      if (cp.timestamp <= targetTs && best.timestamp > targetTs) return cp;
-      if (best.timestamp <= targetTs && cp.timestamp > targetTs) return best;
-      return cpDiff < bestDiff ? cp : best;
-    });
-
-    const saveAndRestore = async (target: CheckpointData) => {
-      try {
-        const beforeId = `${currentSessionId}-before-restore-${Date.now()}`;
-        const newCp = await createCheckpoint(
-          ctx.cwd,
-          beforeId,
-          event.targetTurnIndex,
-          currentSessionId,
-        );
-        // Update cache
-        if (checkpointCache) {
-          checkpointCache.push(newCp);
-          cacheSessionIds.add(newCp.sessionId);
-        }
-        await restoreCheckpoint(ctx.cwd, target);
-        ctx.ui.notify("Files restored to checkpoint", "info");
-      } catch (error) {
-        ctx.ui.notify(
-          `Restore failed: ${error instanceof Error ? error.message : String(error)}`,
-          "error",
-        );
-      }
-    };
-
-    if (selected === "code") {
-      await saveAndRestore(checkpoint);
-      return { skipConversationRestore: true };
-    }
-
-    // "all" - restore files and let conversation restore happen
-    await saveAndRestore(checkpoint);
-    return undefined;
-  });
-
 }

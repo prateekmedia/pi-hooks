@@ -11,7 +11,7 @@
   "license": "MIT",
   "type": "module",
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "^0.18.0",
+    "@mariozechner/pi-coding-agent": "^0.27.2",
     "typescript": "^5.9.3"
   },
   "devDependencies": {

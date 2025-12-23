@@ -6,7 +6,7 @@
  * them to the tool result so the agent can fix errors.
  */
 
-import type { HookAPI } from "@mariozechner/pi-coding-agent/hooks";
+import type { HookAPI, ToolResultEvent } from "@mariozechner/pi-coding-agent/hooks";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import * as path from "node:path";
 import * as fs from "node:fs";
@@ -581,7 +581,7 @@ export default function (pi: HookAPI) {
     }
   });
 
-  pi.on("tool_result", async (event, ctx) => {
+  pi.on("tool_result", async (event: ToolResultEvent, ctx) => {
     if (!lspManager) return;
 
     const isWrite = event.toolName === "write";
@@ -632,7 +632,12 @@ export default function (pi: HookAPI) {
 
       // Append to result for LLM
       const output = `\nThis file has errors, please fix\n<file_diagnostics>\n${errors.map(formatDiagnostic).join("\n")}\n</file_diagnostics>\n`;
-      return { result: event.result + output };
+      return { 
+        content: [
+          ...event.content,
+          { type: "text" as const, text: output }
+        ] 
+      };
     } catch {}
 
     return undefined;
