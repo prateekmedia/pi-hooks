@@ -421,8 +421,6 @@ export default function (pi: HookAPI) {
 	// ========================================================================
 	pi.on("session", async (event, ctx) => {
 		if (event.reason === "start") {
-			sessionDeniedCommands.clear();
-
 			// Load settings based on git context
 			const loaded = loadAutonomyLevel(ctx.cwd);
 			settingsPath = loaded.settingsPath;
@@ -463,9 +461,7 @@ export default function (pi: HookAPI) {
 				// No UI (print mode: pi -p) - default to high to avoid blocking
 				autonomyLevel = "high";
 			}
-		} else if (event.reason === "clear") {
-			sessionDeniedCommands.clear();
-		}
+
 	});
 
 	// ========================================================================

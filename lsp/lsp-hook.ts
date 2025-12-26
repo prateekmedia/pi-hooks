@@ -548,16 +548,16 @@ export default function (pi: HookAPI) {
   let lspManager: LSPManager | null = null;
 
   pi.on("session", async (event, ctx) => {
-    // On clear or switch, shutdown existing LSP manager
-    if (event.reason === "clear" || event.reason === "switch") {
+    // Shutdown LSP only when process exits
+    if (event.reason === "shutdown") {
       if (lspManager) {
         await lspManager.shutdown();
         lspManager = null;
       }
     }
     
-    // Initialize LSP manager on start or switch
-    if (event.reason === "start" || event.reason === "switch") {
+    // Initialize LSP manager on start
+    if (event.reason === "start") {
       lspManager = new LSPManager(ctx.cwd);
 
       // Pre-warm: trigger LSP initialization for detected project type
