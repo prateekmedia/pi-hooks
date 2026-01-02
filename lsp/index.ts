@@ -13,8 +13,12 @@ import { fileURLToPath } from "node:url";
 import { Type, type Static } from "@sinclair/typebox";
 import { StringEnum } from "@mariozechner/pi-ai";
 import type { CustomToolFactory } from "@mariozechner/pi-coding-agent";
+import { Text } from "@mariozechner/pi-tui";
 import { getManager } from "./lsp-shared.js";
 import { formatDiagnostic, type LSPManager } from "./lsp-core.js";
+
+// Preview line limit when not expanded
+const PREVIEW_LINES = 10;
 
 const ACTIONS = [
   "definition",
@@ -314,6 +318,57 @@ const factory: CustomToolFactory = () => ({
         return { content: [{ type: "text", text }], details: result ?? null };
       }
     }
+  },
+
+  renderCall(args: LspParamsType, theme: any) {
+    let text = theme.fg("toolTitle", theme.bold("lsp "));
+    text += theme.fg("accent", args.action || "...");
+    if (args.file) {
+      text += " " + theme.fg("muted", args.file);
+    }
+    if (args.query) {
+      text += " " + theme.fg("dim", `query="${args.query}"`);
+    } else if (args.line !== undefined && args.column !== undefined) {
+      text += theme.fg("warning", `:${args.line}:${args.column}`);
+    }
+    return new Text(text, 0, 0);
+  },
+
+  renderResult(result: any, options: { expanded: boolean; isPartial: boolean }, theme: any) {
+    if (options.isPartial) {
+      return new Text(theme.fg("warning", "Running..."), 0, 0);
+    }
+
+    const textContent = result.content?.find((c: any) => c.type === "text")?.text || "";
+    const lines = textContent.split("\n");
+
+    // Always show header lines (action:, query:, resolvedPosition:)
+    let headerEndIndex = 0;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith("action:") || lines[i].startsWith("query:") || lines[i].startsWith("resolvedPosition:")) {
+        headerEndIndex = i + 1;
+      } else {
+        break;
+      }
+    }
+
+    const headerLines = lines.slice(0, headerEndIndex);
+    const contentLines = lines.slice(headerEndIndex);
+
+    const maxContentLines = options.expanded ? contentLines.length : PREVIEW_LINES;
+    const displayContentLines = contentLines.slice(0, maxContentLines);
+    const remaining = contentLines.length - maxContentLines;
+
+    let output = headerLines.map((line: string) => theme.fg("muted", line)).join("\n");
+    if (displayContentLines.length > 0) {
+      if (output) output += "\n";
+      output += displayContentLines.map((line: string) => theme.fg("toolOutput", line)).join("\n");
+    }
+    if (remaining > 0) {
+      output += theme.fg("dim", `\n... (${remaining} more lines)`);
+    }
+
+    return new Text(output, 0, 0);
   },
 });
 
