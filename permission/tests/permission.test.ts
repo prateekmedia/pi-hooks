@@ -279,6 +279,19 @@ test("high: bun run with unsafe scripts", async () => {
   assertLevel("bunx create-next-app", "high");
 });
 
+test("medium: CocoaPods install/update", async () => {
+  assertLevel("pod install", "medium");
+  assertLevel("pod update", "medium");
+  assertLevel("pod repo update", "medium");
+});
+
+test("high: pod commands that run code", async () => {
+  // pod run doesn't exist - the correct way is to use xcodebuild or similar
+  // But if someone tries to run arbitrary pod subcommands, they should be high
+  assertLevel("pod run", "high");
+  assertLevel("pod exec", "high");
+});
+
 test("medium: python install/test only", async () => {
   assertLevel("pip install requests", "medium");
   assertLevel("pip3 install requests", "medium");

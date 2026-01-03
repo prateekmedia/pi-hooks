@@ -90,6 +90,7 @@ The principle: **building/installing is MEDIUM, running code is HIGH**.
 - **Rust**: `cargo build/test/check/clippy/fmt` (NOT `cargo run`)
 - **Go**: `go build/test/get/mod` (NOT `go run`)
 - **Ruby**: `gem install`, `bundle install`
+- **CocoaPods**: `pod install`, `pod update`, `pod repo update`
 - **PHP**: `composer install`
 - **Java**: `mvn compile/test`, `gradle build/test`
 - **.NET**: `dotnet build/test`

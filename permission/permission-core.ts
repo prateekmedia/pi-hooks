@@ -577,6 +577,8 @@ const MEDIUM_PACKAGE_PATTERNS: Array<[string, RegExp]> = [
   ["gem", /^install$/],
   ["bundle", /^(install|update|add|remove|binstubs)$/],
   ["bundler", /^(install|update|add|remove)$/],
+  // CocoaPods - dependency management only
+  ["pod", /^(install|update|repo)$/],
   // rake/rails can run arbitrary code - HIGH (not included here)
   ["rspec", /./], // test runner
 
