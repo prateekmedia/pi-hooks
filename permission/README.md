@@ -71,6 +71,104 @@ Global settings stored in `~/.pi/agent/settings.json`:
 }
 ```
 
+## Custom Configuration
+
+Configure permission overrides and prefix mappings in `~/.pi/agent/settings.json`:
+
+```json
+{
+  "permissionLevel": "medium",
+  "permissionConfig": {
+    "overrides": {
+      "minimal": ["tmux list-*", "tmux show-*"],
+      "medium": ["tmux attach*", "tmux new*"],
+      "high": ["rm -rf *"],
+      "dangerous": ["dd if=* of=/dev/*"]
+    },
+    "prefixMappings": [
+      { "from": "fvm flutter", "to": "flutter" },
+      { "from": "nvm exec", "to": "" },
+      { "from": "rbenv exec", "to": "" }
+    ]
+  }
+}
+```
+
+### Override Patterns
+
+Glob patterns matched against the full command:
+- `*` matches any characters
+- `?` matches single character
+- Patterns are case-insensitive
+
+Override priority (highest to lowest):
+1. `dangerous` - Always prompt, even at high level
+2. `high` - Require high permission
+3. `medium` - Require medium permission
+4. `low` - Require low permission
+5. `minimal` - Allow at minimal (read-only)
+
+> **Note:** When a command matches patterns in multiple levels, the **most restrictive** level wins. Avoid overlapping patterns across levels. For example, don't put `tmux *` in medium if you want `tmux list-*` to be minimal.
+
+**Examples:**
+```json
+{
+  "overrides": {
+    "minimal": [
+      "tmux list-*",      // tmux list-sessions, tmux list-windows, etc.
+      "tmux show-*",      // tmux show-options, tmux show-messages, etc.
+      "screen -list"      // List screen sessions
+    ],
+    "medium": [
+      "tmux attach*",     // Attach to sessions
+      "tmux new*",        // Create new sessions
+      "screen -r *"       // Reattach to screen
+    ],
+    "high": [
+      "rm -rf *",         // Force rm with any arguments
+      "dd of=/dev/*"      // dd writing to any device
+    ],
+    "dangerous": [
+      "dd if=* of=/dev/*" // dd writing to device from any source
+    ]
+  }
+}
+```
+
+### Prefix Mappings
+
+Normalize version manager commands to their base tools:
+- `fvm flutter build` → treated as `flutter build` (medium)
+- `rbenv exec ruby` → treated as `ruby` (classified normally)
+
+**Common mappings:**
+```json
+{
+  "prefixMappings": [
+    { "from": "fvm flutter", "to": "flutter" },
+    { "from": "nvm exec", "to": "" },
+    { "from": "rbenv exec", "to": "" },
+    { "from": "pyenv exec", "to": "" }
+  ]
+}
+```
+
+**How it works:**
+1. Commands are checked against prefix mappings first
+2. If a prefix matches, it's replaced with the mapped value
+3. The normalized command is then classified
+
+### /permission config Command
+
+View and manage configuration from the CLI:
+
+```
+/permission config show    # Display current configuration
+/permission config reset   # Reset to default (empty)
+```
+
+Edit `~/.pi/agent/settings.json` directly for full control.
+
 ## Command Classification
 
 The principle: **building/installing is MEDIUM, running code is HIGH**.

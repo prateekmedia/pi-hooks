@@ -12,6 +12,10 @@ import {
   loadGlobalPermission,
   saveGlobalPermission,
   classifyCommand,
+  loadPermissionConfig,
+  savePermissionConfig,
+  invalidateConfigCache,
+  type PermissionConfig,
 } from "./permission-core.js";
 
 // Re-export types and constants needed by the hook
@@ -96,6 +100,56 @@ function setLevel(
 // HANDLERS
 // ============================================================================
 
+/** Handle /permission config subcommand */
+async function handleConfigSubcommand(
+  state: PermissionState,
+  args: string,
+  ctx: any
+): Promise<void> {
+  const parts = args.trim().split(/\s+/);
+  const action = parts[0];
+
+  if (action === "show") {
+    const config = loadPermissionConfig();
+    const configStr = JSON.stringify(config, null, 2);
+    ctx.ui.notify(`Permission Config:\n${configStr}`, "info");
+    return;
+  }
+
+  if (action === "reset") {
+    savePermissionConfig({});
+    invalidateConfigCache();
+    ctx.ui.notify("Permission config reset to defaults", "info");
+    return;
+  }
+
+  // Show help
+  const help = `Usage: /permission config <action>
+
+Actions:
+  show  - Display current configuration
+  reset - Reset to default configuration
+
+Edit ~/.pi/agent/settings.json directly for full control:
+
+{
+  "permissionConfig": {
+    "overrides": {
+      "minimal": ["tmux list-*", "tmux show-*"],
+      "medium": ["tmux *", "screen *"],
+      "high": ["rm -rf *"],
+      "dangerous": ["dd if=* of=/dev/*"]
+    },
+    "prefixMappings": [
+      { "from": "fvm flutter", "to": "flutter" },
+      { "from": "nvm exec", "to": "" }
+    ]
+  }
+}`;
+
+  ctx.ui.notify(help, "info");
+}
+
 /** Handle /permission command */
 export async function handlePermissionCommand(
   state: PermissionState,
@@ -103,6 +157,13 @@ export async function handlePermissionCommand(
   ctx: any
 ): Promise<void> {
   const arg = args.trim().toLowerCase();
+
+  // Handle config subcommand
+  if (arg === "config" || arg.startsWith("config ")) {
+    const configArgs = arg.replace(/^config\s*/, '');
+    await handleConfigSubcommand(state, configArgs, ctx);
+    return;
+  }
 
   // Direct level set: /permission medium
   if (arg && LEVELS.includes(arg as PermissionLevel)) {

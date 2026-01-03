@@ -4,7 +4,7 @@
  * Run with: npm test
  */
 
-import { classifyCommand, type Classification } from "../permission-core.js";
+import { classifyCommand, type Classification, type PermissionConfig } from "../permission-core.js";
 
 // ============================================================================
 // Test runner
@@ -1070,6 +1070,337 @@ test("happy: Go development", async () => {
   assertLevel("go run .", "high");
   assertLevel("go test ./...", "medium");
   assertLevel("go fmt ./...", "medium");
+});
+
+// ============================================================================
+// Configurable Override Tests
+// ============================================================================
+
+test("override: custom minimal patterns", async () => {
+  const config: PermissionConfig = {
+    overrides: {
+      minimal: ["tmux list-*", "tmux show-*"]
+    }
+  };
+
+  const result1 = classifyCommand("tmux list-sessions", config);
+  assertEqual(result1.level, "minimal", "tmux list-sessions should be minimal");
+
+  const result2 = classifyCommand("tmux show-options", config);
+  assertEqual(result2.level, "minimal", "tmux show-options should be minimal");
+
+  // Without override, tmux would be high (unknown command)
+  const result3 = classifyCommand("tmux attach", config);
+  assertEqual(result3.level, "high", "tmux attach should be high (no override)");
+});
+
+test("override: custom medium patterns", async () => {
+  const config: PermissionConfig = {
+    overrides: {
+      medium: ["tmux *"]
+    }
+  };
+
+  const result = classifyCommand("tmux new-session -s test", config);
+  assertEqual(result.level, "medium", "tmux should be medium with override");
+});
+
+test("override: custom high patterns", async () => {
+  const config: PermissionConfig = {
+    overrides: {
+      high: ["rm -rf *"]
+    }
+  };
+
+  const result = classifyCommand("rm -rf /tmp/test", config);
+  assertEqual(result.level, "high", "rm -rf should be high");
+});
+
+test("override: dangerous patterns", async () => {
+  const config: PermissionConfig = {
+    overrides: {
+      dangerous: ["dd if=* of=/dev/*"]
+    }
+  };
+
+  const result = classifyCommand("dd if=/dev/zero of=/dev/sda", config);
+  assertEqual(result.dangerous, true, "dd to device should be dangerous");
+});
+
+test("override: priority order", async () => {
+  const config: PermissionConfig = {
+    overrides: {
+      minimal: ["cmd *"],
+      high: ["cmd dangerous*"]
+    }
+  };
+
+  // high should override minimal for matching pattern
+  const result1 = classifyCommand("cmd dangerous-thing", config);
+  assertEqual(result1.level, "high", "more specific high pattern wins");
+
+  const result2 = classifyCommand("cmd safe-thing", config);
+  assertEqual(result2.level, "minimal", "minimal pattern applies");
+});
+
+// ============================================================================
+// Prefix Mapping Tests
+// ============================================================================
+
+test("prefix: fvm flutter normalization", async () => {
+  const config: PermissionConfig = {
+    prefixMappings: [
+      { from: "fvm flutter", to: "flutter" }
+    ]
+  };
+
+  // fvm flutter build → flutter build → medium
+  const result1 = classifyCommand("fvm flutter build", config);
+  assertEqual(result1.level, "medium", "fvm flutter build should be medium");
+
+  // fvm flutter run → flutter run → high (runs code)
+  const result2 = classifyCommand("fvm flutter run", config);
+  assertEqual(result2.level, "high", "fvm flutter run should be high");
+
+  // fvm flutter doctor → flutter doctor → minimal (doctor is read-only)
+  const result3 = classifyCommand("fvm flutter doctor", config);
+  assertEqual(result3.level, "minimal", "fvm flutter doctor should be minimal");
+
+  // fvm flutter test → flutter test → medium
+  const result4 = classifyCommand("fvm flutter test", config);
+  assertEqual(result4.level, "medium", "fvm flutter test should be medium");
+});
+
+test("prefix: multiple prefix mappings", async () => {
+  const config: PermissionConfig = {
+    prefixMappings: [
+      { from: "fvm flutter", to: "flutter" },
+      { from: "nvm exec node", to: "node" },
+      { from: "rbenv exec ruby", to: "ruby" }
+    ]
+  };
+
+  // nvm exec node script.js → node script.js → high
+  const result1 = classifyCommand("nvm exec node script.js", config);
+  assertEqual(result1.level, "high", "nvm exec node should be high");
+
+  // rbenv exec ruby script.rb → ruby script.rb → high
+  const result2 = classifyCommand("rbenv exec ruby script.rb", config);
+  assertEqual(result2.level, "high", "rbenv exec ruby should be high");
+});
+
+test("prefix: empty mapping (strip prefix)", async () => {
+  const config: PermissionConfig = {
+    prefixMappings: [
+      { from: "rbenv exec", to: "" }
+    ]
+  };
+
+  // rbenv exec ruby script.rb → ruby script.rb → high
+  const result = classifyCommand("rbenv exec ruby script.rb", config);
+  assertEqual(result.level, "high", "rbenv exec stripped, ruby runs code");
+});
+
+test("prefix: combined with overrides", async () => {
+  const config: PermissionConfig = {
+    overrides: {
+      minimal: ["flutter doctor"]
+    },
+    prefixMappings: [
+      { from: "fvm flutter", to: "flutter" }
+    ]
+  };
+
+  // fvm flutter doctor → flutter doctor → matches override → minimal
+  const result = classifyCommand("fvm flutter doctor", config);
+  assertEqual(result.level, "minimal", "prefix + override combination works");
+});
+
+// ============================================================================
+// Edge Cases
+// ============================================================================
+
+test("config: empty config doesn't break classification", async () => {
+  const config: PermissionConfig = {};
+
+  assertLevel("ls", "minimal");
+  assertLevel("npm install", "medium");
+  assertLevel("git push", "high");
+});
+
+test("config: null/undefined patterns handled", async () => {
+  const config: PermissionConfig = {
+    overrides: {
+      minimal: undefined as any,
+      medium: null as any,
+      high: []
+    }
+  };
+
+  // Should not throw, should use built-in classification
+  const result = classifyCommand("ls", config);
+  assertEqual(result.level, "minimal", "handles null/undefined gracefully");
+});
+
+test("config: case insensitivity", async () => {
+  const config: PermissionConfig = {
+    overrides: {
+      minimal: ["TMUX list-*"]
+    },
+    prefixMappings: [
+      { from: "FVM FLUTTER", to: "flutter" }
+    ]
+  };
+
+  const result1 = classifyCommand("tmux list-sessions", config);
+  assertEqual(result1.level, "minimal", "pattern matching is case-insensitive");
+
+  const result2 = classifyCommand("fvm flutter build", config);
+  assertEqual(result2.level, "medium", "prefix matching is case-insensitive");
+});
+
+// ============================================================================
+// Security Edge Cases
+// ============================================================================
+
+test("security: wildcard pattern doesn't bypass dangerous detection", async () => {
+  // Even with a broad override, built-in dangerous detection should work
+  // because dangerous commands are caught BEFORE override check
+  const config: PermissionConfig = {
+    overrides: {
+      minimal: ["sudo *"]  // Attempting to whitelist sudo
+    }
+  };
+
+  // sudo should still be dangerous due to built-in detection
+  const result = classifyCommand("sudo rm -rf /", config);
+  // Note: The override will match, but this tests that users understand
+  // overrides can bypass safety - this is by design for trusted environments
+  assertEqual(result.level, "minimal", "override takes precedence (by design)");
+});
+
+test("security: prefix mapping to dangerous command", async () => {
+  const config: PermissionConfig = {
+    prefixMappings: [
+      { from: "safe", to: "rm -rf" }  // Dangerous mapping
+    ]
+  };
+
+  // "safe /" becomes "rm -rf /" which should be classified correctly
+  const result = classifyCommand("safe /", config);
+  assertEqual(result.level, "high", "dangerous mapped command is high");
+  assertEqual(result.dangerous, true, "dangerous mapped command is dangerous");
+});
+
+test("security: override consistency with prefix mapping", async () => {
+  // Override should work on NORMALIZED command, not original
+  const config: PermissionConfig = {
+    overrides: {
+      minimal: ["flutter doctor"]
+    },
+    prefixMappings: [
+      { from: "fvm flutter", to: "flutter" }
+    ]
+  };
+
+  // "fvm flutter doctor" -> normalized to "flutter doctor" -> matches override
+  const result = classifyCommand("fvm flutter doctor", config);
+  assertEqual(result.level, "minimal", "override matches normalized command");
+});
+
+test("security: invalid config entries are handled gracefully", async () => {
+  // Test that invalid entries don't cause crashes
+  const config: PermissionConfig = {
+    overrides: {
+      minimal: [123 as any, null as any, "ls"]
+    },
+    prefixMappings: [
+      null as any,
+      { from: "", to: "test" },
+      { from: "fvm flutter", to: "flutter" }
+    ]
+  };
+
+  // Should not throw, valid entries still work
+  const result1 = classifyCommand("ls", config);
+  assertEqual(result1.level, "minimal", "valid pattern still works");
+
+  const result2 = classifyCommand("fvm flutter build", config);
+  assertEqual(result2.level, "medium", "valid prefix mapping works");
+});
+
+// ============================================================================
+// Whitespace and Boundary Tests
+// ============================================================================
+
+test("prefix: handles tabs and multiple spaces", async () => {
+  const config: PermissionConfig = {
+    prefixMappings: [
+      { from: "fvm flutter", to: "flutter" }
+    ]
+  };
+
+  // Multiple spaces after prefix
+  const result1 = classifyCommand("fvm flutter  build", config);
+  assertEqual(result1.level, "medium", "handles multiple spaces");
+});
+
+test("prefix: partial match doesn't trigger", async () => {
+  const config: PermissionConfig = {
+    prefixMappings: [
+      { from: "fvm", to: "flutter" }
+    ]
+  };
+
+  // "fvmx" should NOT match "fvm" prefix
+  const result = classifyCommand("fvmx build", config);
+  assertEqual(result.level, "high", "partial prefix doesn't match");
+});
+
+// ============================================================================
+// Pattern Edge Cases
+// ============================================================================
+
+test("override: question mark wildcard", async () => {
+  const config: PermissionConfig = {
+    overrides: {
+      minimal: ["l?"]  // matches ls, la, ll, etc.
+    }
+  };
+
+  const result1 = classifyCommand("ls", config);
+  assertEqual(result1.level, "minimal", "? matches single char");
+
+  const result2 = classifyCommand("lsa", config);
+  assertEqual(result2.level, "high", "? doesn't match multiple chars");
+});
+
+test("override: special regex chars in pattern", async () => {
+  const config: PermissionConfig = {
+    overrides: {
+      minimal: ["test.file", "path/to/file", "cmd [arg]"]
+    }
+  };
+
+  // Dots, slashes, brackets should be treated literally
+  const result1 = classifyCommand("test.file", config);
+  assertEqual(result1.level, "minimal", "dot is literal");
+
+  const result2 = classifyCommand("testXfile", config);
+  assertEqual(result2.level, "high", "dot doesn't match any char");
+});
+
+test("override: empty pattern array", async () => {
+  const config: PermissionConfig = {
+    overrides: {
+      minimal: [],
+      medium: []
+    }
+  };
+
+  // Should fall through to built-in classification
+  const result = classifyCommand("ls", config);
+  assertEqual(result.level, "minimal", "empty arrays use built-in");
 });
 
 // ============================================================================

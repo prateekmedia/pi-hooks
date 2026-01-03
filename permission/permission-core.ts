@@ -50,6 +50,229 @@ export interface Classification {
 }
 
 // ============================================================================
+// CONFIGURATION TYPES
+// ============================================================================
+
+export interface PermissionConfig {
+  /** Override patterns to force specific permission levels */
+  overrides?: {
+    minimal?: string[];
+    low?: string[];
+    medium?: string[];
+    high?: string[];
+    dangerous?: string[];
+  };
+  /** Prefix mappings to normalize commands before classification */
+  prefixMappings?: Array<{
+    from: string;
+    to: string;
+  }>;
+}
+
+// ============================================================================
+// CONFIGURATION CACHING
+// ============================================================================
+
+let configCache: PermissionConfig | null = null;
+let configCacheTime = 0;
+/** Cache TTL in milliseconds - balance between responsiveness and performance */
+const CONFIG_CACHE_TTL = 5000; // 5 seconds
+
+let regexCache: Map<string, RegExp> = new Map();
+/** Maximum cached regex patterns to prevent memory exhaustion */
+const MAX_REGEX_CACHE_SIZE = 500;
+
+function getCachedConfig(): PermissionConfig {
+  const now = Date.now();
+  if (!configCache || now - configCacheTime > CONFIG_CACHE_TTL) {
+    configCache = loadPermissionConfig();
+    configCacheTime = now;
+  }
+  return configCache;
+}
+
+function getCachedRegex(pattern: string): RegExp {
+  let regex = regexCache.get(pattern);
+  if (!regex) {
+    // Evict oldest entries if cache is full (simple FIFO eviction)
+    if (regexCache.size >= MAX_REGEX_CACHE_SIZE) {
+      const firstKey = regexCache.keys().next().value;
+      if (firstKey) regexCache.delete(firstKey);
+    }
+    regex = globToRegex(pattern);
+    regexCache.set(pattern, regex);
+  }
+  return regex;
+}
+
+export function invalidateConfigCache(): void {
+  configCache = null;
+  regexCache.clear();
+}
+
+/**
+ * Validate and sanitize permission config
+ * Returns a safe config object with invalid entries removed
+ */
+function validateConfig(config: unknown): PermissionConfig {
+  if (!config || typeof config !== 'object') {
+    return {};
+  }
+
+  const result: PermissionConfig = {};
+  const raw = config as Record<string, unknown>;
+
+  // Validate overrides
+  if (raw.overrides && typeof raw.overrides === 'object') {
+    const overrides = raw.overrides as Record<string, unknown>;
+    result.overrides = {};
+    
+    const levels = ['minimal', 'low', 'medium', 'high', 'dangerous'] as const;
+    for (const level of levels) {
+      const patterns = overrides[level];
+      if (Array.isArray(patterns)) {
+        // Filter to only valid string patterns, limit count
+        const validPatterns = patterns
+          .filter((p): p is string => typeof p === 'string' && p.length > 0)
+          .slice(0, 100); // Max 100 patterns per level
+        if (validPatterns.length > 0) {
+          result.overrides[level] = validPatterns;
+        }
+      }
+    }
+  }
+
+  // Validate prefix mappings
+  if (Array.isArray(raw.prefixMappings)) {
+    const validMappings = raw.prefixMappings
+      .filter((m): m is { from: string; to: string } => 
+        m && typeof m === 'object' &&
+        typeof (m as any).from === 'string' && (m as any).from.length > 0 &&
+        typeof (m as any).to === 'string'
+      )
+      .slice(0, 50); // Max 50 prefix mappings
+    if (validMappings.length > 0) {
+      result.prefixMappings = validMappings;
+    }
+  }
+
+  return result;
+}
+
+// ============================================================================
+// PATTERN MATCHING
+// ============================================================================
+
+/**
+ * Convert a glob-like pattern to a RegExp
+ * Supports: * (any chars), ? (single char)
+ * Patterns are matched against the full command string
+ */
+function globToRegex(pattern: string): RegExp {
+  try {
+    // Escape regex special chars except * and ?
+    let regex = pattern
+      .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*/g, '.*')
+      .replace(/\?/g, '.');
+
+    return new RegExp(`^${regex}$`, 'i');
+  } catch {
+    // Return a pattern that never matches on invalid input
+    return /(?!)/;
+  }
+}
+
+/**
+ * Check if a command matches any pattern in the list
+ */
+function matchesAnyPattern(command: string, patterns: string[] | undefined | null): boolean {
+  if (!patterns || !Array.isArray(patterns) || patterns.length === 0) {
+    return false;
+  }
+  return patterns.some(pattern => 
+    typeof pattern === 'string' && getCachedRegex(pattern).test(command)
+  );
+}
+
+/**
+ * Apply prefix mappings to normalize command before classification
+ * e.g., "fvm flutter build" → "flutter build"
+ */
+function applyPrefixMappings(
+  command: string,
+  mappings: PermissionConfig['prefixMappings']
+): string {
+  if (!mappings || !Array.isArray(mappings) || mappings.length === 0) return command;
+
+  const trimmed = command.trim();
+  const trimmedLower = trimmed.toLowerCase();
+
+  for (const mapping of mappings) {
+    // Validate mapping structure
+    if (!mapping || typeof mapping.from !== 'string' || typeof mapping.to !== 'string') {
+      continue;
+    }
+    
+    const { from, to } = mapping;
+    const fromLower = from.toLowerCase();
+
+    if (trimmedLower.startsWith(fromLower)) {
+      // Check for word boundary (whitespace or end of string after prefix)
+      const afterPrefix = trimmed.substring(fromLower.length);
+      // Use regex to check for whitespace boundary (handles tabs, multiple spaces)
+      if (afterPrefix === '' || /^\s/.test(afterPrefix)) {
+        // Replace prefix with mapped value, preserve rest with trimmed leading space
+        const remainder = afterPrefix.replace(/^\s+/, '');
+        if (to === '') {
+          return remainder;
+        }
+        return remainder ? `${to} ${remainder}` : to;
+      }
+    }
+  }
+
+  return command;
+}
+
+/**
+ * Check if command matches any configured override
+ * Returns the override classification or null if no match
+ */
+function checkOverrides(
+  command: string,
+  overrides: PermissionConfig['overrides']
+): Classification | null {
+  if (!overrides) return null;
+
+  const trimmed = command.trim();
+
+  // Check dangerous first (highest priority)
+  if (overrides.dangerous && matchesAnyPattern(trimmed, overrides.dangerous)) {
+    return { level: 'high', dangerous: true };
+  }
+
+  // Check levels in order of specificity (high to low)
+  if (overrides.high && matchesAnyPattern(trimmed, overrides.high)) {
+    return { level: 'high', dangerous: false };
+  }
+
+  if (overrides.medium && matchesAnyPattern(trimmed, overrides.medium)) {
+    return { level: 'medium', dangerous: false };
+  }
+
+  if (overrides.low && matchesAnyPattern(trimmed, overrides.low)) {
+    return { level: 'low', dangerous: false };
+  }
+
+  if (overrides.minimal && matchesAnyPattern(trimmed, overrides.minimal)) {
+    return { level: 'minimal', dangerous: false };
+  }
+
+  return null; // No override matched
+}
+
+// ============================================================================
 // SETTINGS PERSISTENCE
 // ============================================================================
 
@@ -86,6 +309,17 @@ export function loadGlobalPermission(): PermissionLevel | null {
 export function saveGlobalPermission(level: PermissionLevel): void {
   const settings = loadSettings();
   settings.permissionLevel = level;
+  saveSettings(settings);
+}
+
+export function loadPermissionConfig(): PermissionConfig {
+  const settings = loadSettings();
+  return validateConfig(settings.permissionConfig);
+}
+
+export function savePermissionConfig(config: PermissionConfig): void {
+  const settings = loadSettings();
+  settings.permissionConfig = config;
   saveSettings(settings);
 }
 
@@ -799,13 +1033,25 @@ function classifySegment(tokens: string[]): Classification {
   return { level: "high", dangerous: false };
 }
 
-export function classifyCommand(command: string): Classification {
-  const parsed = parseCommand(command);
+export function classifyCommand(command: string, config?: PermissionConfig): Classification {
+  // Load config if not provided (for testing)
+  const effectiveConfig = config ?? getCachedConfig();
+
+  // Step 1: Apply prefix normalization
+  const normalizedCommand = applyPrefixMappings(command, effectiveConfig.prefixMappings);
+
+  const parsed = parseCommand(normalizedCommand);
 
   // If command contains shell tricks (command substitution, backticks, etc.),
   // require HIGH level as we cannot reliably classify the embedded commands
   if (parsed.hasShellTricks) {
     return { level: "high", dangerous: false };
+  }
+
+  // Step 2: Check for override on NORMALIZED command (consistent with classification)
+  const override = checkOverrides(normalizedCommand, effectiveConfig.overrides);
+  if (override) {
+    return override;
   }
 
   let maxLevel: PermissionLevel = "minimal";
