@@ -33,6 +33,9 @@ import {
 // ============================================================================
 
 const INIT_TIMEOUT_MS = 30000;
+const MAX_OPEN_FILES_PER_CLIENT = 30;
+const FILE_IDLE_TIMEOUT_MS = 60_000; // 1 minute
+const CLEANUP_INTERVAL_MS = 30_000; // 30 seconds
 
 export const LANGUAGE_IDS: Record<string, string> = {
   ".dart": "dart",
@@ -69,11 +72,16 @@ interface LSPHandle {
   initializationOptions?: Record<string, unknown>;
 }
 
+interface OpenFileState {
+  version: number;
+  lastAccess: number;
+}
+
 interface LSPClient {
   connection: MessageConnection;
   process: ChildProcessWithoutNullStreams;
   diagnostics: Map<string, Diagnostic[]>;
-  openFiles: Map<string, number>;
+  openFiles: Map<string, OpenFileState>;
   diagnosticsListeners: Map<string, Array<() => void>>;
 }
 
@@ -261,9 +269,64 @@ export class LSPManager {
   private spawning = new Map<string, Promise<LSPClient | undefined>>();
   private broken = new Set<string>();
   private cwd: string;
+  private cleanupTimer: NodeJS.Timeout | null = null;
 
   constructor(cwd: string) {
     this.cwd = cwd;
+    this.startCleanupTimer();
+  }
+
+  private startCleanupTimer(): void {
+    this.cleanupTimer = setInterval(() => {
+      this.cleanupIdleFiles();
+    }, CLEANUP_INTERVAL_MS);
+    // Don't block process exit
+    this.cleanupTimer.unref();
+  }
+
+  private cleanupIdleFiles(): void {
+    const now = Date.now();
+    for (const client of this.clients.values()) {
+      const toClose: string[] = [];
+      for (const [filePath, state] of client.openFiles) {
+        if (now - state.lastAccess > FILE_IDLE_TIMEOUT_MS) {
+          toClose.push(filePath);
+        }
+      }
+      for (const filePath of toClose) {
+        this.closeFile(client, filePath);
+      }
+    }
+  }
+
+  private closeFile(client: LSPClient, absPath: string): void {
+    const state = client.openFiles.get(absPath);
+    if (!state) return;
+
+    try {
+      const uri = pathToFileURL(absPath).href;
+      client.connection.sendNotification("textDocument/didClose", {
+        textDocument: { uri },
+      });
+    } catch {}
+
+    client.openFiles.delete(absPath);
+    // Keep diagnostics cache - still valid until file changes
+  }
+
+  private evictLRUIfNeeded(client: LSPClient): void {
+    if (client.openFiles.size <= MAX_OPEN_FILES_PER_CLIENT) return;
+
+    let oldest: { path: string; lastAccess: number } | null = null;
+    for (const [filePath, state] of client.openFiles) {
+      if (!oldest || state.lastAccess < oldest.lastAccess) {
+        oldest = { path: filePath, lastAccess: state.lastAccess };
+      }
+    }
+
+    if (oldest) {
+      this.closeFile(client, oldest.path);
+    }
   }
 
   private clientKey(serverId: string, root: string): string {
@@ -470,22 +533,28 @@ export class LSPManager {
     languageId: string,
     content: string
   ): Promise<void> {
+    const now = Date.now();
+
     for (const client of clients) {
-      const version = client.openFiles.get(absPath);
+      const state = client.openFiles.get(absPath);
 
       try {
-        if (version !== undefined) {
-          const newVersion = version + 1;
-          client.openFiles.set(absPath, newVersion);
+        if (state !== undefined) {
+          // File already open - send didChange
+          const newVersion = state.version + 1;
+          client.openFiles.set(absPath, { version: newVersion, lastAccess: now });
           await client.connection.sendNotification("textDocument/didChange", {
             textDocument: { uri, version: newVersion },
             contentChanges: [{ text: content }],
           });
         } else {
-          client.openFiles.set(absPath, 0);
+          // New file - send didOpen
+          client.openFiles.set(absPath, { version: 0, lastAccess: now });
           await client.connection.sendNotification("textDocument/didOpen", {
             textDocument: { uri, languageId, version: 0, text: content },
           });
+          // Evict oldest file if over limit
+          this.evictLRUIfNeeded(client);
         }
       } catch {}
     }
@@ -523,15 +592,13 @@ export class LSPManager {
     // Track if this is a newly opened file (TypeScript sends empty diagnostics first on didOpen)
     const isNewlyOpened = clients.some(client => client.openFiles.get(absPath) === undefined);
 
-    const waitPromises: Promise<boolean>[] = [];
+    const waitPromises: Array<Promise<{ client: LSPClient; responded: boolean }>> = [];
     for (const client of clients) {
-      client.diagnostics.delete(absPath);
-
-      const promise = new Promise<boolean>((resolve) => {
-        const timer = setTimeout(() => resolve(false), timeoutMs);
+      const promise = new Promise<{ client: LSPClient; responded: boolean }>((resolve) => {
+        const timer = setTimeout(() => resolve({ client, responded: false }), timeoutMs);
         let notificationCount = 0;
         const minDelay = isNewlyOpened ? 500 : 0; // Wait 500ms after first notification for new files
-        
+
         const listeners = client.diagnosticsListeners.get(absPath) || [];
         listeners.push(() => {
           notificationCount++;
@@ -539,11 +606,11 @@ export class LSPManager {
           if (isNewlyOpened && notificationCount === 1) {
             setTimeout(() => {
               clearTimeout(timer);
-              resolve(true);
+              resolve({ client, responded: true });
             }, minDelay);
           } else {
             clearTimeout(timer);
-            resolve(true);
+            resolve({ client, responded: true });
           }
         });
         client.diagnosticsListeners.set(absPath, listeners);
@@ -554,13 +621,19 @@ export class LSPManager {
     await this.sendDidOpenOrChange(clients, absPath, uri, languageId, content);
 
     const results = await Promise.all(waitPromises);
-    const receivedResponse = results.some(r => r);
+    let receivedResponse = results.some(r => r.responded);
 
     const allDiagnostics: Diagnostic[] = [];
     for (const client of clients) {
       const diags = client.diagnostics.get(absPath);
       if (diags) allDiagnostics.push(...diags);
     }
+
+    if (!receivedResponse) {
+      const hasCached = clients.some((client) => client.diagnostics.has(absPath));
+      if (hasCached) receivedResponse = true;
+    }
+
     return { diagnostics: allDiagnostics, receivedResponse };
   }
 
@@ -698,6 +771,12 @@ export class LSPManager {
   }
 
   async shutdown(): Promise<void> {
+    // Stop cleanup timer
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+
     for (const client of this.clients.values()) {
       try {
         await client.connection.sendRequest("shutdown");

@@ -135,8 +135,10 @@ export async function handleToolResult(
   }
 
   try {
-    const diagnostics = await state.manager.touchFileAndWait(filePath, DIAGNOSTICS_WAIT_MS);
+    const result = await state.manager.touchFileAndWait(filePath, DIAGNOSTICS_WAIT_MS);
+    if (!result.receivedResponse) return undefined;
 
+    const diagnostics = result.diagnostics;
     const errors = isEdit ? diagnostics.filter((d) => d.severity === 1) : diagnostics;
     if (errors.length === 0) return undefined;
 
