@@ -170,11 +170,19 @@ function validateConfig(config: unknown): PermissionConfig {
  */
 function globToRegex(pattern: string): RegExp {
   try {
-    // Escape regex special chars except * and ?
+    // Limit pattern complexity to prevent ReDoS
+    // Reject patterns with too many consecutive * (creates .*.*.*... patterns)
+    if (/\*{5,}/.test(pattern)) {
+      // More than 4 consecutive * - reject to prevent exponential backtracking
+      return /(?!)/;
+    }
+
+    // Escape regex special chars first (except * and ? which we handle specially)
+    // Note: - is not special outside character classes, so we don't need to escape it
     let regex = pattern
       .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-      .replace(/\*/g, '.*')
-      .replace(/\?/g, '.');
+      .replace(/\*/g, '.*') // * -> match any characters
+      .replace(/\?/g, '.'); // ? -> match single character
 
     return new RegExp(`^${regex}$`, 'i');
   } catch {
@@ -291,10 +299,24 @@ function loadSettings(): Record<string, unknown> {
 function saveSettings(settings: Record<string, unknown>): void {
   const settingsPath = getSettingsPath();
   const dir = path.dirname(settingsPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+  const tempPath = `${settingsPath}.tmp`;
+  
+  try {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    // Atomic write: write to temp file first, then rename
+    fs.writeFileSync(tempPath, JSON.stringify(settings, null, 2) + "\n");
+    fs.renameSync(tempPath, settingsPath); // Atomic on POSIX systems
+  } catch (e) {
+    // Clean up temp file on error
+    try {
+      if (fs.existsSync(tempPath)) {
+        fs.unlinkSync(tempPath);
+      }
+    } catch {}
+    throw e;
   }
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
 }
 
 export function loadGlobalPermission(): PermissionLevel | null {
@@ -339,13 +361,18 @@ interface ParsedCommand {
 // Shell execution commands that can run arbitrary code
 const SHELL_EXECUTION_COMMANDS = new Set([
   "eval", "exec", "source", ".", // shell builtins
+  "env", // can execute commands: env rm -rf /
+  "command", // bypasses aliases, can execute arbitrary commands
+  "builtin", // uses shell builtins directly
+  // Wrapper commands that can execute arbitrary commands
+  "time", "nice", "nohup", "timeout", "watch", "strace",
   // Note: xargs is handled in CONDITIONAL_WRITE_COMMANDS with smart logic
 ]);
 
 // Patterns that indicate command substitution or shell tricks in raw command
 // Only patterns that can actually execute arbitrary code
 const SHELL_TRICK_PATTERNS = [
-  /\$\([^)]+\)/, // $(command) - command substitution
+  /\$\((?!\()[^)]+\)/, // $(command) - command substitution (exclude $(( for arithmetic)
   /`[^`]+`/, // `command` - backtick substitution
   /<\([^)]+\)/, // <(command) - process substitution (input)
   />\([^)]+\)/, // >(command) - process substitution (output)
@@ -376,8 +403,16 @@ function detectShellTricks(command: string): boolean {
   return false;
 }
 
+/**
+ * Check if a command contains arithmetic expansion $((..))
+ * Used to avoid false positives from shell-quote parsing
+ */
+function hasArithmeticExpansion(command: string): boolean {
+  return /\$\(\(/.test(command);
+}
+
 // Output redirection operators that write to files
-const OUTPUT_REDIRECTION_OPS = new Set([">", ">>", ">|"]);
+const OUTPUT_REDIRECTION_OPS = new Set([">", ">>", ">|", "&>", "&>>"]);
 
 // Safe redirection targets (not actual file writes)
 const SAFE_REDIRECTION_TARGETS = new Set([
@@ -410,7 +445,7 @@ function parseCommand(command: string): ParsedCommand {
   let writesFiles = false;
 
   // Redirection operators - these don't start new command segments
-  const REDIRECTION_OPS = new Set([">", "<", ">>", ">&", "<&", ">|", "<>"]);
+  const REDIRECTION_OPS = new Set([">", "<", ">>", ">&", "<&", ">|", "<>", "&>", "&>>"]);
   let pendingOutputRedirect = false;
 
   for (let i = 0; i < tokens.length; i++) {
@@ -452,12 +487,17 @@ function parseCommand(command: string): ParsedCommand {
             }
           }
         } else {
-          // Command separator like |, &&, ||, ;
-          if (currentSegment.length > 0) {
-            segments.push(currentSegment);
-            currentSegment = [];
+          // Only treat actual command separators as segment boundaries
+          // ( and ) are grouping/subshell/arithmetic operators, not separators
+          const COMMAND_SEPARATORS = new Set(["|", "&&", "||", ";", "&"]);
+          if (COMMAND_SEPARATORS.has(op)) {
+            if (currentSegment.length > 0) {
+              segments.push(currentSegment);
+              currentSegment = [];
+            }
+            operators.push(op);
           }
-          operators.push(op);
+          // Ignore ( and ) - they don't create new command segments
         }
       } else if ("comment" in token) {
         // Comment - ignore
@@ -583,7 +623,6 @@ const MINIMAL_COMMANDS = new Set([
   "echo", "printf", "whoami", "id", "date", "cal", "uname", "hostname", "uptime",
   "type", "file", "stat", "wc", "du", "df", "free",
   "ps", "top", "htop", "pgrep", "sleep",
-  "env", "printenv", "set",
   // Man/help
   "man", "help", "info",
   // Pipeline utilities (note: xargs, tee handled specially - they can write/execute)
@@ -805,7 +844,6 @@ const MEDIUM_PACKAGE_PATTERNS: Array<[string, RegExp]> = [
 
   // Go - build/test only (NOT go run)
   ["go", /^(get|mod|build|test|generate|fmt|vet|clean|install)$/],
-  ["gofmt", /./],
 
   // Ruby - install/build only
   ["gem", /^install$/],
@@ -857,15 +895,61 @@ const MEDIUM_PACKAGE_PATTERNS: Array<[string, RegExp]> = [
   ["ninja", /./],
   ["meson", /./],
 
-  // Linters/formatters
+  // Linters/formatters - static analysis only (MEDIUM)
   ["eslint", /./],
   ["prettier", /./],
   ["black", /./],
   ["flake8", /./],
+  ["pylint", /./],
+  ["ruff", /./],
+  ["pyflakes", /./],
+  ["bandit", /./],
   ["mypy", /./],
   ["pyright", /./],
   ["tsc", /./],
+  ["tslint", /./],
+  ["standard", /./],
+  ["xo", /./],
   ["rubocop", /./],
+  ["standardrb", /./],
+  ["reek", /./],
+  ["brakeman", /./],
+  ["golangci-lint", /./],
+  ["gofmt", /./],
+  ["go vet", /./],
+  ["golint", /./],
+  ["staticcheck", /./],
+  ["errcheck", /./],
+  ["misspell", /./],
+  ["swiftlint", /./],
+  ["swiftformat", /./],
+  ["ktlint", /./],
+  ["detekt", /./],
+  ["dartanalyzer", /./], // dart analyze alternative name
+  ["dartfmt", /./],
+  ["clang-tidy", /./],
+  ["clang-format", /./],
+  ["cppcheck", /./],
+  ["checkstyle", /./],
+  ["pmd", /./],
+  ["spotbugs", /./],
+  ["sonarqube", /./],
+  ["phpcs", /./],
+  ["phpmd", /./],
+  ["phpstan", /./],
+  ["psalm", /./],
+  ["php-cs-fixer", /./],
+  ["luacheck", /./],
+  ["shellcheck", /./],
+  ["checkov", /./],
+  ["tflint", /./],
+  ["buf", /./], // protobuf linter
+  ["sqlfluff", /./],
+  ["yamllint", /./],
+  ["markdownlint", /./],
+  ["djlint", /./],
+  ["djhtml", /./],
+  ["commitlint", /./],
 
   // Test runners
   ["jest", /./],

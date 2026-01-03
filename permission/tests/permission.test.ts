@@ -122,9 +122,11 @@ test("minimal: process commands", async () => {
 });
 
 test("minimal: environment commands", async () => {
-  assertLevel("env", "minimal");
-  assertLevel("printenv", "minimal");
-  assertLevel("set", "minimal");
+  // env, printenv, set are HIGH because they can execute arbitrary commands
+  // Security fix: env rm -rf / is possible
+  assertLevel("env", "high");
+  assertLevel("printenv", "high");
+  assertLevel("set", "high");
 });
 
 test("minimal: pipeline utilities", async () => {
@@ -454,6 +456,21 @@ test("high: unknown commands default to high", async () => {
   assertLevel("my-custom-script.sh", "high");
 });
 
+test("high: wrapper commands that can execute arbitrary code", async () => {
+  // These commands wrap other commands and can execute anything
+  assertLevel("time rm -rf /", "high");
+  assertLevel("nice rm -rf /", "high");
+  assertLevel("nohup rm -rf / &", "high");
+  assertLevel("timeout 10 rm -rf /", "high");
+  assertLevel("watch ls", "high");
+  assertLevel("strace ls", "high");
+  // command/builtin bypass aliases
+  assertLevel("command rm file", "high");
+  assertLevel("builtin echo test", "high");
+  // env can execute commands
+  assertLevel("env rm -rf /", "high");
+});
+
 // ============================================================================
 // Dangerous commands tests
 // ============================================================================
@@ -623,6 +640,9 @@ test("complex: commands with redirections", async () => {
   // Output redirections to files require at least low (file write)
   assertLevel("echo hello > file.txt", "low");
   assertLevel("echo hello >> file.txt", "low");
+  // &> and &>> redirect both stdout and stderr to a file
+  assertLevel("ls &> output.txt", "low");
+  assertLevel("ls &>> append.txt", "low");
   // Input redirections are read-only
   assertLevel("cat < file.txt", "minimal");
   // tee writes to log.txt, so requires high
@@ -630,6 +650,8 @@ test("complex: commands with redirections", async () => {
   // Redirecting to /dev/null is safe (no actual file write)
   assertLevel("ls > /dev/null 2>&1", "minimal");
   assertLevel("echo test > /dev/null", "minimal");
+  assertLevel("ls &> /dev/null", "minimal");
+  assertLevel("ls &>> /dev/null", "minimal");
   // fd duplication (2>&1) doesn't write files
   assertLevel("ls 2>&1", "minimal");
 });
@@ -732,10 +754,10 @@ test("edge: subshells and grouping", async () => {
 });
 
 test("edge: here documents and strings", async () => {
-  // Here documents - << is parsed, cat is off
+  // Here documents - << is parsed, cat is minimal
   assertLevel("cat << EOF", "minimal");
-  // Here strings <<< - complex syntax, defaults to high
-  assertLevel("cat <<< 'hello'", "high");
+  // Here strings <<< - just passes input to command, safe
+  assertLevel("cat <<< 'hello'", "minimal");
 });
 
 test("edge: multiple redirections", async () => {
@@ -788,10 +810,11 @@ test("edge: nested command substitution variations", async () => {
 });
 
 test("edge: arithmetic expansion", async () => {
-  // Arithmetic expansion $((...)) looks like command substitution to regex
-  // This is a known limitation - we err on the side of caution
-  assertLevel("echo $((1 + 2))", "high");
-  assertLevel("echo $((10 * 5))", "high");
+  // Arithmetic expansion $((...)) is safe - uses negative lookahead to exclude from command substitution detection
+  assertLevel("echo $((1 + 2))", "minimal");
+  assertLevel("echo $((10 * 5))", "minimal");
+  // Actual command substitution $(cmd) is still detected
+  assertLevel("echo $(whoami)", "high");
 });
 
 test("edge: brace expansion (safe)", async () => {

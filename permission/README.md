@@ -194,7 +194,28 @@ The principle: **building/installing is MEDIUM, running code is HIGH**.
 - **.NET**: `dotnet build/test`
 - **Git local**: `git add`, `git commit`, `git pull`, `git checkout`, `git merge`, `git clone`
 - **Build tools**: `make`, `cmake`, `ninja`
-- **Linters**: `eslint`, `prettier`, `black`, `rustfmt`, `mypy`
+- **Linters**: All static analysis tools that only check/report without executing code
+  - **JavaScript/TypeScript**: `eslint`, `prettier`, `tsc --noEmit`, `tslint`, `standard`, `xo`
+  - **Python**: `pylint`, `flake8`, `black`, `mypy`, `pyright`, `ruff`, `pyflakes`, `bandit`
+  - **Rust**: `cargo clippy`, `cargo fmt`, `rustfmt`
+  - **Go**: `gofmt`, `go vet`, `golangci-lint`, `golint`, `staticcheck`, `errcheck`, `misspell`
+  - **Ruby**: `rubocop`, `standardrb`, `reek`, `brakeman`
+  - **Swift**: `swiftlint`, `swiftformat`
+  - **Kotlin**: `ktlint`, `detekt`
+  - **Dart/Flutter**: `dart analyze`, `flutter analyze`, `dart format`, `flutter format`
+  - **C/C++**: `clang-tidy`, `clang-format`, `cppcheck`
+  - **Java**: `checkstyle`, `pmd`, `spotbugs`, `error-prone`
+  - **C#**: `dotnet format`, `dotnet build -t:RunCodeAnalysis`
+  - **PHP**: `phpcs`, `phpmd`, `phpstan`, `psalm`, `php-cs-fixer`
+  - **Lua**: `luacheck`
+  - **Shell**: `shellcheck`
+  - **Infrastructure as Code**: `checkov`, `tflint`, `terraform validate`
+  - **Protocol Buffers**: `buf lint`, `protoc --lint`
+  - **SQL**: `sqlfluff`
+  - **YAML**: `yamllint`
+  - **Markdown**: `markdownlint`
+  - **HTML/Django**: `djlint`, `djhtml`
+  - **Git**: `commitlint`
 - **File ops**: `mkdir`, `touch`, `cp`, `mv`
 
 ### High Level (Runs Code / Irreversible)
