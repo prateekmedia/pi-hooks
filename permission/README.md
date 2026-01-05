@@ -1,4 +1,4 @@
-# Permission Hook
+# Permission Extension
 
 Layered permission control for pi-coding-agent.
 
@@ -18,7 +18,7 @@ Layered permission control for pi-coding-agent.
 ### Interactive Mode
 
 ```bash
-# Hook loads automatically from ~/.pi/agent/hooks/ or .pi/hooks/
+# Extension loads automatically from ~/.pi/agent/extensions/ or .pi/extensions/
 pi
 ```
 
@@ -246,16 +246,38 @@ Commands containing these patterns require HIGH permission:
 
 ## Installation
 
-1. Copy to hooks directory:
+1. Copy to extensions directory:
    ```bash
-   cp -r permission ~/.pi/agent/hooks/
+   cp -r permission ~/.pi/agent/extensions/
    ```
 
 2. Install dependencies:
    ```bash
-   cd ~/.pi/agent/hooks/permission
+   cd ~/.pi/agent/extensions/permission
    npm install
    ```
+
+Or add to `~/.pi/agent/settings.json`:
+```json
+{
+  "extensions": ["/absolute/path/to/permission"]
+}
+```
+
+Or use CLI:
+```bash
+pi --extension ./permission/
+# or directly
+pi --extension ./permission/permission.ts
+```
+
+## File Structure
+
+| File | Purpose |
+|------|---------|
+| `permission.ts` | Extension (entry point + state management + handlers) |
+| `permission-core.ts` | Core permission logic (classification, config) |
+| `package.json` | Declares extension via "pi" field |
 
 ## License
 

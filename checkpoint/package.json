@@ -1,17 +1,25 @@
 {
   "name": "checkpoint",
-  "version": "0.31.0",
-  "description": "Git-based checkpoint helper for [`pi-coding-agent`](https://www.npmjs.com/package/@mariozechner/pi-coding-agent).",
-  "main": "index.js",
+  "version": "0.35.0",
+  "description": "Git-based checkpoint extension for pi-coding-agent - creates checkpoints at each turn for code state restoration",
+  "type": "module",
+  "scripts": {
+    "test": "npx tsx tests/checkpoint.test.ts"
+  },
+  "keywords": [
+    "git",
+    "checkpoint",
+    "pi-coding-agent",
+    "extension"
+  ],
+  "author": "",
+  "license": "MIT",
+  "pi": {
+    "extensions": ["./checkpoint.ts"]
+  },
   "devDependencies": {
     "@types/node": "^25.0.3",
     "tsx": "^4.19.2",
     "typescript": "^5.9.3"
-  },
-  "scripts": {
-    "test": "npx tsx tests/checkpoint.test.ts"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC"
+  }
 }

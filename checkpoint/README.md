@@ -1,6 +1,6 @@
-# checkpoint hook
+# checkpoint extension
 
-Git-based checkpoint helper for [`pi-coding-agent`](https://www.npmjs.com/package/@mariozechner/pi-coding-agent).
+Git-based checkpoint extension for [`pi-coding-agent`](https://www.npmjs.com/package/@mariozechner/pi-coding-agent).
 
 ## What it does
 
@@ -11,23 +11,30 @@ Git-based checkpoint helper for [`pi-coding-agent`](https://www.npmjs.com/packag
 
 ## Setup
 
-```bash
-cd checkpoint
-npm install
+Place the `checkpoint/` directory where pi can load it:
+
+- **Project scoped**: `cp -r checkpoint .pi/extensions/`
+- **Global**: `cp -r checkpoint ~/.pi/agent/extensions/`
+
+Or add to `~/.pi/agent/settings.json`:
+```json
+{
+  "extensions": ["/absolute/path/to/checkpoint"]
+}
 ```
 
-Place `checkpoint.ts` where pi can load it:
-
-- **Project scoped**: `mkdir -p .pi/hooks && cp checkpoint.ts .pi/hooks/`
-- **Global**: add the absolute file path to `~/.pi/agent/settings.json` under `"hooks"`
+Or use CLI:
+```bash
+pi --extension ./checkpoint/
+```
 
 ## File structure
 
 ```
 checkpoint/
-  checkpoint.ts        # Hook entry point (event handlers)
+  checkpoint.ts        # Extension (entry point + state management + event handlers)
   checkpoint-core.ts   # Core git operations (no pi dependencies)
-  checkpoint-hook.ts   # Hook utilities (state, session, UI)
+  package.json         # Declares extension via "pi" field
   tests/
     checkpoint.test.ts # Tests for core git operations
 ```
@@ -40,7 +47,7 @@ npm test
 
 ## Requirements
 
-- Git repository (hook auto-detects)
+- Git repository (extension auto-detects)
 - Node.js 18+
 
 ## How it works
@@ -56,7 +63,7 @@ Checkpoints are stored as Git refs under `refs/pi-checkpoints/` and persist acro
 
 ## Smart Filtering
 
-To avoid bloating snapshots with large or generated files, the hook automatically excludes:
+To avoid bloating snapshots with large or generated files, the extension automatically excludes:
 
 ### Ignored Directories
 These directories are never included in snapshots (even if not in `.gitignore`):
@@ -69,7 +76,7 @@ These directories are never included in snapshots (even if not in `.gitignore`):
 - **Large directories**: Untracked directories with more than 200 files are excluded
 
 ### Safe Restore
-On restore, the hook **never deletes**:
+On restore, the extension **never deletes**:
 - Files in ignored directories
 - Large files/directories that were excluded from the snapshot
 - Pre-existing untracked files that existed when the checkpoint was created

@@ -1,13 +1,12 @@
 {
   "name": "lsp",
-  "version": "0.31.0",
-  "description": "LSP diagnostics hook for pi-coding-agent - provides real-time language server feedback for Dart/Flutter, TypeScript, Vue, Svelte, and more",
-  "main": "lsp-hook.ts",
+  "version": "0.35.0",
+  "description": "LSP extension for pi-coding-agent - provides language server tool and diagnostics feedback for Dart/Flutter, TypeScript, Vue, Svelte, Python, Go, Rust",
   "scripts": {
     "test": "npx tsx tests/lsp.test.ts",
-    "test:index": "npx tsx tests/index.test.ts",
+    "test:tool": "npx tsx tests/index.test.ts",
     "test:integration": "npx tsx tests/lsp-integration.test.ts",
-    "test:all": "npm test && npm run test:index && npm run test:integration"
+    "test:all": "npm test && npm run test:tool && npm run test:integration"
   },
   "keywords": [
     "lsp",
@@ -17,14 +16,23 @@
     "typescript",
     "vue",
     "svelte",
+    "python",
+    "go",
+    "rust",
     "pi-coding-agent",
-    "hook"
+    "extension"
   ],
   "author": "",
   "license": "MIT",
   "type": "module",
+  "pi": {
+    "extensions": ["./lsp.ts", "./lsp-tool.ts"]
+  },
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "^0.27.2",
+    "@mariozechner/pi-ai": "^0.35.0",
+    "@mariozechner/pi-coding-agent": "^0.35.0",
+    "@mariozechner/pi-tui": "^0.35.0",
+    "@sinclair/typebox": "^0.34.33",
     "vscode-languageserver-protocol": "^3.17.5"
   },
   "devDependencies": {

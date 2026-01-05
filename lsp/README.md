@@ -1,11 +1,11 @@
-# LSP Hook + Tool
+# LSP Extension
 
 Language Server Protocol integration for pi-coding-agent.
 
 ## Highlights
 
-- **Hook**: Runs `write`/`edit` results through the matching LSP and appends diagnostics to tool output
-- **Tool**: On-demand LSP queries (definitions, references, hover, symbols, diagnostics, signatures)
+- **Hook** (`lsp.ts`): Runs `write`/`edit` results through the matching LSP and appends diagnostics to tool output
+- **Tool** (`lsp-tool.ts`): On-demand LSP queries (definitions, references, hover, symbols, diagnostics, signatures)
 - Manages one LSP server per project root and reuses them across turns
 - **Efficient**: Bounded memory usage via LRU cache and idle file cleanup
 - Supports TypeScript/JavaScript, Vue, Svelte, Dart/Flutter, Python, Go, and Rust
@@ -24,38 +24,38 @@ Language Server Protocol integration for pi-coding-agent.
 
 ### Known Limitations
 
-**rust-analyzer**: Very slow to initialize (30-60+ seconds) because it compiles the entire Rust project before returning diagnostics. This is a known rust-analyzer behavior, not a bug in this hook. For quick feedback, consider using `cargo check` directly.
+**rust-analyzer**: Very slow to initialize (30-60+ seconds) because it compiles the entire Rust project before returning diagnostics. This is a known rust-analyzer behavior, not a bug in this extension. For quick feedback, consider using `cargo check` directly.
 
 ## Usage
 
 ### Installation
 
-1. Copy to hooks directory:
+1. Copy to extensions directory:
    ```bash
-   cp -r lsp ~/.pi/agent/hooks/
+   cp -r lsp ~/.pi/agent/extensions/
    ```
 
 2. Install dependencies:
    ```bash
-   cd ~/.pi/agent/hooks/lsp
+   cd ~/.pi/agent/extensions/lsp
    npm install
    ```
 
 Or add to global settings (`~/.pi/agent/settings.json`):
 ```json
 {
-  "hooks": [
-    "/absolute/path/to/pi-hooks/lsp/lsp.ts"
-  ],
-  "customTools": [
-    "/absolute/path/to/pi-hooks/lsp"
-  ]
+  "extensions": ["/absolute/path/to/lsp"]
 }
 ```
 
-Or use CLI flags:
+Or use CLI:
 ```bash
-pi --hook ./lsp/lsp.ts --tool ./lsp
+# Load both hook and tool (recommended)
+pi --extension ./lsp/
+
+# Load individually
+pi --extension ./lsp/lsp.ts        # Just auto-diagnostics hook
+pi --extension ./lsp/lsp-tool.ts   # Just the LSP tool
 ```
 
 ### Prerequisites
@@ -82,7 +82,7 @@ go install golang.org/x/tools/gopls@latest
 rustup component add rust-analyzer
 ```
 
-The hook spawns binaries from your PATH.
+The extension spawns binaries from your PATH.
 
 ## How It Works
 
@@ -144,16 +144,19 @@ Example questions the LLM can answer using this tool:
 
 | File | Purpose |
 |------|---------|
-| `lsp.ts` | Hook entry point |
-| `lsp-hook.ts` | Hook event handlers and state management |
+| `lsp.ts` | Hook extension (auto-diagnostics after write/edit) |
+| `lsp-tool.ts` | Tool extension (on-demand LSP queries) |
 | `lsp-core.ts` | LSPManager class, server configs, singleton manager |
-| `index.ts` | Tool entry point (`--tool ./lsp`) |
+| `package.json` | Declares both extensions via "pi" field |
 
 ## Testing
 
 ```bash
 # Unit tests (root detection, configuration)
 npm test
+
+# Tool tests
+npm run test:tool
 
 # Integration tests (spawns real language servers)
 npm run test:integration
