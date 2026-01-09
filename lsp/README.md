@@ -140,6 +140,14 @@ Example questions the LLM can answer using this tool:
 - "Rename `oldFunction` to `newFunction`"
 - "What quick fixes are available at line 10?"
 
+## Settings
+
+Use `/lsp` to configure the auto diagnostics hook:
+- Mode: after each edit/write, at agent end, or disabled
+- Scope: session-only or global (`~/.pi/agent/settings.json`)
+
+Agent-end mode analyzes files touched during the full agent response (after all tool calls complete) and posts a diagnostics message only once. Disabling the hook does not disable the `/lsp` tool.
+
 ## File Structure
 
 | File | Purpose |
