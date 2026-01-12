@@ -84,9 +84,14 @@ Looped subagent execution via the `ralph_loop` tool.
 <img src="assets/ralph-loop.png" alt="Ralph Loop Extension" width="500">
 
 - Runs single, parallel, or chain subagent tasks until a condition returns false
+- Takes a prompt and exit condition (exit condition optional)
+- Can supply max iterations and minimum delay between each
+- Optionally supply model and thinking
 - Supports `conditionCommand`, `maxIterations`, and `sleepMs` controls
 - Defaults to the `worker` agent and the last user prompt when omitted
 - No npm install required
+
+Example prompt: "Use ralph loop to check the current time five times, sleeping 1s between iterations."
 
 ## Usage
 

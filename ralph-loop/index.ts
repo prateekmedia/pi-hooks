@@ -15,7 +15,7 @@ import type { Message } from "@mariozechner/pi-ai";
 import { StringEnum } from "@mariozechner/pi-ai";
 import { type ExtensionAPI, getMarkdownTheme } from "@mariozechner/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
-import { Type } from "@sinclair/typebox";
+import { Type, type Static } from "@sinclair/typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
 
 const MAX_PARALLEL_TASKS = 8;
@@ -147,7 +147,7 @@ interface UsageStats {
 
 interface SingleResult {
 	agent: string;
-	agentSource: "user" | "project" | "unknown";
+	agentSource: "user" | "project" | "builtin" | "unknown";
 	task: string;
 	exitCode: number;
 	messages: Message[];
@@ -191,7 +191,7 @@ interface RalphLoopDetails {
 	stopReason: string;
 	conditionCommand: string;
 	conditionSource: "provided" | "inferred" | "default";
-	maxIterations: number;
+	maxIterations: number | null;
 	sleepMs: number;
 	lastCondition: { stdout: string; stderr: string; exitCode: number };
 	prompt: LoopPromptInfo;
@@ -510,7 +510,7 @@ const SubagentParams = Type.Object({
 	thinking: Type.Optional(ThinkingLevel),
 });
 
-const DEFAULT_LOOP_MAX_ITERATIONS = 10;
+const DEFAULT_LOOP_MAX_ITERATIONS = Number.MAX_SAFE_INTEGER;
 const DEFAULT_LOOP_SLEEP_MS = 1000;
 
 const LoopParams = Type.Object({
@@ -520,9 +520,7 @@ const LoopParams = Type.Object({
 				"Bash command used for looping; continue while stdout is 'true' (case-insensitive). If omitted, inferred from task or defaults to 'echo true'.",
 		}),
 	),
-	maxIterations: Type.Optional(
-		Type.Number({ description: `Max iterations (default ${DEFAULT_LOOP_MAX_ITERATIONS}).` }),
-	),
+	maxIterations: Type.Optional(Type.Number({ description: "Max iterations (optional)." })),
 	sleepMs: Type.Optional(Type.Number({ description: `Sleep between iterations in ms (default ${DEFAULT_LOOP_SLEEP_MS}).` })),
 	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke (for single mode)" })),
 	task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
@@ -714,34 +712,38 @@ async function executeSubagentOnce(
 			emitParallelUpdate();
 		}
 
-		const results = await mapWithConcurrencyLimit(params.tasks, MAX_CONCURRENCY, async (t, index) => {
-			const result = await runSingleAgent(
-				ctx.cwd,
-				agents,
-				t.agent,
-				t.task,
-				t.cwd,
-				undefined,
-				signal,
-				onUpdate
-					? (partial) => {
-						if (partial.details?.results[0] && allResults) {
-							allResults[index] = partial.details.results[0];
-							emitParallelUpdate();
+		const results = await mapWithConcurrencyLimit(
+			params.tasks,
+			MAX_CONCURRENCY,
+			async (t: Static<typeof TaskItem>, index: number) => {
+				const result = await runSingleAgent(
+					ctx.cwd,
+					agents,
+					t.agent,
+					t.task,
+					t.cwd,
+					undefined,
+					signal,
+					onUpdate
+						? (partial) => {
+							if (partial.details?.results[0] && allResults) {
+								allResults[index] = partial.details.results[0];
+								emitParallelUpdate();
+							}
 						}
-					}
-					: undefined,
-				makeDetails("parallel"),
-				t.model,
-				t.thinking ?? params.thinking,
-				index,
-			);
-			if (allResults) {
-				allResults[index] = result;
-				emitParallelUpdate();
-			}
-			return result;
-		});
+						: undefined,
+					makeDetails("parallel"),
+					t.model,
+					t.thinking ?? params.thinking,
+					index,
+				);
+				if (allResults) {
+					allResults[index] = result;
+					emitParallelUpdate();
+				}
+				return result;
+			},
+		);
 
 		const successCount = results.filter((r) => r.exitCode === 0).length;
 		const fullOutputs = results.map((r) => {
@@ -972,6 +974,7 @@ export default function (pi: ExtensionAPI) {
 			const discovery = discoverAgents(ctx.cwd, agentScope);
 			const agents = discovery.agents;
 			const emptyPrompt: LoopPromptInfo = { mode: "single", items: [] };
+
 			const buildDetails = (overrides: Partial<RalphLoopDetails>): RalphLoopDetails => ({
 				iterations: [],
 				stopReason: "invalid-params",

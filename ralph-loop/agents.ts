@@ -16,13 +16,33 @@ export interface AgentConfig {
 	model?: string;
 	permissionLevel?: string;
 	systemPrompt: string;
-	source: "user" | "project";
+	source: "user" | "project" | "builtin";
 	filePath: string;
 }
 
 export interface AgentDiscoveryResult {
 	agents: AgentConfig[];
 	projectAgentsDir: string | null;
+}
+
+const BUILTIN_WORKER_SYSTEM_PROMPT = `
+You are a worker agent with full capabilities. You operate in an isolated context window to handle delegated tasks.
+
+Work autonomously to complete the assigned task. Use all available tools as needed.
+`.trim();
+
+const BUILTIN_AGENTS: AgentConfig[] = [
+	{
+		name: "worker",
+		description: "Built-in worker agent (fallback)",
+		systemPrompt: BUILTIN_WORKER_SYSTEM_PROMPT,
+		source: "builtin",
+		filePath: "builtin:worker",
+	},
+];
+
+function getBuiltinAgents(): AgentConfig[] {
+	return BUILTIN_AGENTS.map((agent) => ({ ...agent }));
 }
 
 function parseFrontmatter(content: string): { frontmatter: Record<string, string>; body: string } {
@@ -137,10 +157,12 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	const userDir = path.join(os.homedir(), ".pi", "agent", "agents");
 	const projectAgentsDir = findNearestProjectAgentsDir(cwd);
 
+	const builtinAgents = getBuiltinAgents();
 	const userAgents = scope === "project" ? [] : loadAgentsFromDir(userDir, "user");
 	const projectAgents = scope === "user" || !projectAgentsDir ? [] : loadAgentsFromDir(projectAgentsDir, "project");
 
 	const agentMap = new Map<string, AgentConfig>();
+	for (const agent of builtinAgents) agentMap.set(agent.name, agent);
 
 	if (scope === "both") {
 		for (const agent of userAgents) agentMap.set(agent.name, agent);

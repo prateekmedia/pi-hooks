@@ -51,10 +51,16 @@ interface HookConfigEntry {
 }
 
 export default function (pi: ExtensionAPI) {
+  type LspActivity = "idle" | "loading" | "working";
+
   let activeClients: Set<string> = new Set();
   let statusUpdateFn: ((key: string, text: string | undefined) => void) | null = null;
   let hookMode: HookMode = DEFAULT_HOOK_MODE;
   let hookScope: HookScope = "global";
+  let activity: LspActivity = "idle";
+  let diagnosticsAbort: AbortController | null = null;
+  let shuttingDown = false;
+
   const touchedFiles: Map<string, boolean> = new Map();
   const globalSettingsPath = path.join(os.homedir(), ".pi", "agent", "settings.json");
 
@@ -163,22 +169,33 @@ export default function (pi: ExtensionAPI) {
       .trim();
   }
 
+  function setActivity(next: LspActivity): void {
+    activity = next;
+    updateLspStatus();
+  }
+
   function updateLspStatus(): void {
     if (!statusUpdateFn) return;
 
-    const clientList = activeClients.size > 0 ? `${DIM}${[...activeClients].join(", ")}${RESET}` : "";
+    const clients = activeClients.size > 0 ? [...activeClients].join(", ") : "";
+    const clientsText = clients ? `${DIM}${clients}${RESET}` : "";
+    const activityText = activity === "loading"
+      ? `${DIM}Loading...${RESET}`
+      : activity === "working"
+        ? `${DIM}Working...${RESET}`
+        : "";
 
     if (hookMode === "disabled") {
-      const text = clientList
-        ? `${YELLOW}LSP${RESET} ${DIM}(tool)${RESET}: ${clientList}`
+      const text = clientsText
+        ? `${YELLOW}LSP${RESET} ${DIM}(tool)${RESET}: ${clientsText}`
         : `${YELLOW}LSP${RESET} ${DIM}(tool)${RESET}`;
       statusUpdateFn("lsp", text);
       return;
     }
 
-    const text = clientList
-      ? `${GREEN}LSP${RESET} ${clientList}`
-      : `${GREEN}LSP${RESET}`;
+    let text = `${GREEN}LSP${RESET}`;
+    if (activityText) text += ` ${activityText}`;
+    if (clientsText) text += ` ${clientsText}`;
     statusUpdateFn("lsp", text);
   }
 
@@ -371,15 +388,16 @@ export default function (pi: ExtensionAPI) {
 
     for (const [marker, ext] of Object.entries(WARMUP_MAP)) {
       if (fs.existsSync(path.join(ctx.cwd, marker))) {
-        statusUpdateFn?.("lsp", `${YELLOW}LSP${RESET} ${DIM}Loading...${RESET}`);
+        setActivity("loading");
         manager.getClientsForFile(path.join(ctx.cwd, `dummy${ext}`))
           .then((clients) => {
             if (clients.length > 0) {
               const cfg = LSP_SERVERS.find((s) => s.extensions.includes(ext));
-              if (cfg) { activeClients.add(cfg.id); updateLspStatus(); }
-            } else updateLspStatus();
+              if (cfg) activeClients.add(cfg.id);
+            }
           })
-          .catch(() => updateLspStatus());
+          .catch(() => {})
+          .finally(() => setActivity("idle"));
         break;
       }
     }
@@ -401,6 +419,11 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async () => {
+    shuttingDown = true;
+    diagnosticsAbort?.abort();
+    diagnosticsAbort = null;
+    setActivity("idle");
+
     await shutdownManager();
     activeClients.clear();
     statusUpdateFn?.("lsp", undefined);
@@ -415,31 +438,74 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("agent_start", async () => {
+    diagnosticsAbort?.abort();
+    diagnosticsAbort = null;
+    setActivity("idle");
     touchedFiles.clear();
   });
 
-  pi.on("agent_end", async (_event, ctx) => {
+  function agentWasAborted(event: any): boolean {
+    const messages = Array.isArray(event?.messages) ? event.messages : [];
+    return messages.some((m: any) =>
+      m &&
+      typeof m === "object" &&
+      (m as any).role === "assistant" &&
+      (((m as any).stopReason === "aborted") || ((m as any).stopReason === "error"))
+    );
+  }
+
+  pi.on("agent_end", async (event, ctx) => {
     if (hookMode !== "agent_end") return;
+
+    if (agentWasAborted(event)) {
+      // Don't run diagnostics on aborted/error runs.
+      touchedFiles.clear();
+      return;
+    }
+
     if (touchedFiles.size === 0) return;
     if (!ctx.isIdle() || ctx.hasPendingMessages()) return;
+
+    const abort = new AbortController();
+    diagnosticsAbort?.abort();
+    diagnosticsAbort = abort;
+
+    setActivity("working");
+    if (ctx.hasUI) (ctx.ui as any).setWorkingMessage?.("LSP: Working...");
 
     const files = Array.from(touchedFiles.entries());
     touchedFiles.clear();
 
-    const outputs: string[] = [];
-    for (const [filePath, includeWarnings] of files) {
-      const output = await collectDiagnostics(filePath, ctx, includeWarnings, true, false);
-      if (output) outputs.push(output);
-    }
+    try {
+      const outputs: string[] = [];
+      for (const [filePath, includeWarnings] of files) {
+        if (shuttingDown || abort.signal.aborted) return;
+        if (!ctx.isIdle() || ctx.hasPendingMessages()) {
+          abort.abort();
+          return;
+        }
 
-    if (outputs.length) {
-      await pi.sendMessage({
-        customType: "lsp-diagnostics",
-        content: outputs.join("\n"),
-        display: true,
-      }, {
-        triggerTurn: true,
-      });
+        const output = await collectDiagnostics(filePath, ctx, includeWarnings, true, false);
+        if (abort.signal.aborted) return;
+        if (output) outputs.push(output);
+      }
+
+      if (shuttingDown || abort.signal.aborted) return;
+
+      if (outputs.length) {
+        pi.sendMessage({
+          customType: "lsp-diagnostics",
+          content: outputs.join("\n"),
+          display: true,
+        }, {
+          triggerTurn: true,
+          deliverAs: "followUp",
+        });
+      }
+    } finally {
+      if (diagnosticsAbort === abort) diagnosticsAbort = null;
+      if (!shuttingDown) setActivity("idle");
+      if (ctx.hasUI) (ctx.ui as any).setWorkingMessage?.();
     }
   });
 
