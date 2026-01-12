@@ -86,6 +86,7 @@ Looped subagent execution via the `ralph_loop` tool.
 - Runs single, parallel, or chain subagent tasks until a condition returns false
 - Supports `conditionCommand`, `maxIterations`, and `sleepMs` controls
 - Defaults to the `worker` agent and the last user prompt when omitted
+- No npm install required
 
 ## Usage
 

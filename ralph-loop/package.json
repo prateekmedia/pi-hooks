@@ -1,0 +1,18 @@
+{
+  "name": "ralph-loop",
+  "version": "0.37.2",
+  "description": "Ralph loop extension for pi-coding-agent - looped subagent execution",
+  "type": "module",
+  "keywords": [
+    "ralph-loop",
+    "subagent",
+    "loop",
+    "pi-coding-agent",
+    "extension"
+  ],
+  "author": "",
+  "license": "MIT",
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}
