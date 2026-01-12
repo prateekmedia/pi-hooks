@@ -1,9 +1,8 @@
 /**
  * LSP Hook Extension for pi-coding-agent
  *
- * Provides automatic diagnostics feedback after file writes/edits.
- * After write/edit operations, fetches LSP diagnostics and appends
- * them to the tool result so the agent can fix errors.
+ * Provides automatic diagnostics feedback (default: agent end).
+ * Can run after each write/edit or once per agent response.
  *
  * Usage:
  *   pi --extension ./lsp.ts
@@ -21,12 +20,12 @@ import { type Diagnostic } from "vscode-languageserver-protocol";
 import { LSP_SERVERS, formatDiagnostic, getOrCreateManager, shutdownManager } from "./lsp-core.js";
 
 type HookScope = "session" | "global";
-type HookMode = "edit_write" | "turn_end" | "disabled";
+type HookMode = "edit_write" | "agent_end" | "disabled";
 
 const DIAGNOSTICS_WAIT_MS = 3000;
 const DIAGNOSTICS_PREVIEW_LINES = 10;
 const DIM = "\x1b[2m", GREEN = "\x1b[32m", YELLOW = "\x1b[33m", RESET = "\x1b[0m";
-const DEFAULT_HOOK_MODE: HookMode = "edit_write";
+const DEFAULT_HOOK_MODE: HookMode = "agent_end";
 const SETTINGS_NAMESPACE = "lsp";
 const LSP_CONFIG_ENTRY = "lsp-hook-config";
 
@@ -36,9 +35,15 @@ const WARMUP_MAP: Record<string, string> = {
 
 const MODE_LABELS: Record<HookMode, string> = {
   edit_write: "After each edit/write",
-  turn_end: "At agent end",
+  agent_end: "At agent end",
   disabled: "Disabled",
 };
+
+function normalizeHookMode(value: unknown): HookMode | undefined {
+  if (value === "edit_write" || value === "agent_end" || value === "disabled") return value;
+  if (value === "turn_end") return "agent_end";
+  return undefined;
+}
 
 interface HookConfigEntry {
   scope: HookScope;
@@ -68,7 +73,8 @@ export default function (pi: ExtensionAPI) {
     const settings = readSettingsFile(globalSettingsPath);
     const lspSettings = settings[SETTINGS_NAMESPACE];
     const hookValue = (lspSettings as { hookMode?: unknown; hookEnabled?: unknown } | undefined)?.hookMode;
-    if (hookValue === "edit_write" || hookValue === "turn_end" || hookValue === "disabled") return hookValue;
+    const normalized = normalizeHookMode(hookValue);
+    if (normalized) return normalized;
 
     const legacyEnabled = (lspSettings as { hookEnabled?: unknown } | undefined)?.hookEnabled;
     if (typeof legacyEnabled === "boolean") return legacyEnabled ? "edit_write" : "disabled";
@@ -108,8 +114,9 @@ export default function (pi: ExtensionAPI) {
   function restoreHookState(ctx: ExtensionContext): void {
     const entry = getLastHookEntry(ctx);
     if (entry?.scope === "session") {
-      if (entry.hookMode) {
-        hookMode = entry.hookMode;
+      const normalized = normalizeHookMode(entry.hookMode);
+      if (normalized) {
+        hookMode = normalized;
         hookScope = "session";
         return;
       }
@@ -301,7 +308,7 @@ export default function (pi: ExtensionAPI) {
       const currentMark = " ✓";
       const modeOptions = ([
         "edit_write",
-        "turn_end",
+        "agent_end",
         "disabled",
       ] as HookMode[]).map((mode) => ({
         mode,
@@ -412,7 +419,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("agent_end", async (_event, ctx) => {
-    if (hookMode !== "turn_end") return;
+    if (hookMode !== "agent_end") return;
     if (touchedFiles.size === 0) return;
     if (!ctx.isIdle() || ctx.hasPendingMessages()) return;
 
@@ -447,7 +454,7 @@ export default function (pi: ExtensionAPI) {
 
     if (hookMode === "disabled") return;
 
-    if (hookMode === "turn_end") {
+    if (hookMode === "agent_end") {
       const includeWarnings = event.toolName === "write";
       const existing = touchedFiles.get(absPath) ?? false;
       touchedFiles.set(absPath, existing || includeWarnings);

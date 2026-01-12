@@ -959,7 +959,7 @@ export default function (pi: ExtensionAPI) {
 		name: "ralph_loop",
 		label: "Ralph Loop",
 		description: [
-			"Run subagent tasks in a loop while a condition command prints true.",
+			"Run subagent tasks in a loop while a condition command prints 'true' to continue (anything else stops).",
 			"Supports single, parallel, and chain modes.",
 			"Supports model/thinking overrides like subagent.",
 			"Defaults to agent 'worker' and the latest user message when agent/task are omitted.",

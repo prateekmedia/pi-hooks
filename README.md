@@ -36,11 +36,13 @@ Git-based checkpoint system for restoring code state when branching conversation
 Language Server Protocol integration (hook + tool).
 
 The package exports two extensions via `package.json`:
-- `lsp-hook.ts` - Auto-diagnostics after write/edit
+- `lsp-hook.ts` - Auto-diagnostics (default at agent end)
 - `lsp-tool.ts` - On-demand LSP queries
 
 **Hook** (auto-diagnostics):
-- Runs LSP diagnostics after each `write`/`edit`
+- Default: runs diagnostics once at agent end for touched files
+- Optional: run after each `write`/`edit`
+- Configure via `/lsp` to switch to per-edit or disabled
 - Supports web, Flutter, and common backend stacks
 - Manages LSP server lifecycles per project root
 
@@ -78,6 +80,8 @@ On first run you pick a level; it's saved globally. You can escalate mid-session
 ### `ralph-loop/`
 
 Looped subagent execution via the `ralph_loop` tool.
+
+<img src="assets/ralph-loop.png" alt="Ralph Loop Extension" width="500">
 
 - Runs single, parallel, or chain subagent tasks until a condition returns false
 - Supports `conditionCommand`, `maxIterations`, and `sleepMs` controls
