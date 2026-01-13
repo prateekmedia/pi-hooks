@@ -38,7 +38,7 @@ While `ralph_loop` is running in interactive mode:
 - `/ralph-stop` to abort the loop
 - `/ralph-status` to show loop status
 
-Tool results render with the rich UI by default. Collapsed view shows the last 30 lines (Ctrl+O to expand). Steering and follow-up messages are sent to the current iteration when possible, otherwise queued for the next iteration; queued/sent messages show in the UI. Exported sessions include a syntax-highlighted loop log.
+Tool results render with the rich UI by default. Collapsed view shows the last 30 lines (Ctrl+O expands tool outputs and the loop view). Steering and follow-up messages are sent to the current iteration when possible, otherwise queued for the next iteration; queued/sent messages show in the UI. Exported sessions include a syntax-highlighted loop log.
 
 Example prompt: "Use ralph loop to check the current time five times, sleeping 1s between iterations."
 

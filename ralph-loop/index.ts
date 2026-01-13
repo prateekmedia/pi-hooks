@@ -282,7 +282,7 @@ type LoopViewerEntry =
 			result: { content: (TextContent | ImageContent)[]; details?: any; isError: boolean; isPartial?: boolean };
 		};
 
-function buildEntryComponent(entry: LoopViewerEntry, theme: any, ui: any, cwd: string) {
+function buildEntryComponent(entry: LoopViewerEntry, theme: any, ui: any, cwd: string, expanded: boolean) {
 	switch (entry.type) {
 		case "section":
 			return new Text(theme.fg("accent", entry.text), 1, 0);
@@ -306,6 +306,7 @@ function buildEntryComponent(entry: LoopViewerEntry, theme: any, ui: any, cwd: s
 					cwd,
 				);
 				toolComp.updateResult(entry.result, Boolean(entry.result.isPartial));
+				toolComp.setExpanded(expanded);
 				return toolComp;
 			}
 			const argsText = JSON.stringify(entry.args ?? {}, null, 2);
@@ -325,11 +326,11 @@ function buildEntryComponent(entry: LoopViewerEntry, theme: any, ui: any, cwd: s
 	}
 }
 
-function renderLoopEntries(entries: LoopViewerEntry[], theme: any, tui: any, cwd: string) {
+function renderLoopEntries(entries: LoopViewerEntry[], theme: any, tui: any, cwd: string, expanded: boolean) {
 	const container = new Container();
 	const toolUi = tui ?? { requestRender: () => {} };
 	for (const entry of entries) {
-		const component = buildEntryComponent(entry, theme, toolUi, cwd);
+		const component = buildEntryComponent(entry, theme, toolUi, cwd, expanded);
 		if (component) {
 			container.addChild(component);
 			container.addChild(new Spacer(1));
@@ -2287,7 +2288,7 @@ export default function (pi: ExtensionAPI) {
 			container.addChild(new Spacer(1));
 			container.addChild(new DynamicBorder((s: string) => theme.fg("muted", s)));
 
-			const entriesComponent = renderLoopEntries(buildLoopEntries(details), theme, undefined, process.cwd());
+			const entriesComponent = renderLoopEntries(buildLoopEntries(details), theme, undefined, process.cwd(), expanded);
 			const contentComponent = expanded
 				? entriesComponent
 				: truncateComponentLines(entriesComponent, COLLAPSED_LINE_LIMIT, theme);
