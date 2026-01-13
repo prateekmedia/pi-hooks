@@ -230,6 +230,7 @@ interface LoopControlState {
 interface ActiveRun {
 	process: any;
 	sendFollowUp: (message: string) => Promise<void>;
+	sendSteer: (message: string) => Promise<void>;
 }
 
 type ActiveRunRegistration = (run: ActiveRun) => () => void;
@@ -837,7 +838,10 @@ async function runSingleAgent(
 				});
 
 			const sendFollowUp = (message: string) => sendCommand({ type: "follow_up", message });
-			unregisterActive = registerActiveRun ? registerActiveRun({ process: proc, sendFollowUp }) : null;
+			const sendSteer = (message: string) => sendCommand({ type: "steer", message });
+			unregisterActive = registerActiveRun
+				? registerActiveRun({ process: proc, sendFollowUp, sendSteer })
+				: null;
 
 			const handleResponse = (event: any) => {
 				const id = event?.id as string | undefined;
@@ -1545,6 +1549,23 @@ export default function (pi: ExtensionAPI) {
 		return delivered;
 	};
 
+	const sendSteerToActive = async (message: string) => {
+		const runs = Array.from(activeRuns);
+		if (runs.length === 0) return false;
+		let delivered = false;
+		await Promise.all(
+			runs.map(async (run) => {
+				try {
+					await run.sendSteer(message);
+					delivered = true;
+				} catch {
+					// ignore
+				}
+			}),
+		);
+		return delivered;
+	};
+
 	const getLoopStatusLine = () => {
 		if (loopControl.status === "idle") return undefined;
 		const details = loopControl.lastDetails;
@@ -1585,7 +1606,7 @@ export default function (pi: ExtensionAPI) {
 			}
 			if (!message) return;
 
-			const sentToActive = await sendFollowUpToActive(message);
+			const sentToActive = await sendSteerToActive(message);
 			if (sentToActive) {
 				loopControl.steeringSent.push(message);
 			} else {
@@ -1726,124 +1747,6 @@ export default function (pi: ExtensionAPI) {
 			if (steeringCount > 0) parts.push(`Steering queued: ${steeringCount}`);
 			if (followUpCount > 0) parts.push(`Follow-ups queued: ${followUpCount}`);
 			ctx.ui.notify(parts.join(" | "), "info");
-		},
-	});
-
-	pi.registerCommand("ralph-view", {
-		description: "View the latest ralph_loop run in a rich UI",
-		handler: async (_args, ctx) => {
-			if (!ctx.hasUI) {
-				ctx.ui.notify("Interactive mode required.", "error");
-				return;
-			}
-
-			const resolveDetails = (): RalphLoopDetails | null => {
-				if (loopControl.lastDetails) return loopControl.lastDetails;
-				const branchEntries = ctx.sessionManager.getBranch?.() ?? ctx.sessionManager.getEntries?.() ?? [];
-				for (let i = branchEntries.length - 1; i >= 0; i--) {
-					const entry = branchEntries[i];
-					if (entry.type !== "message") continue;
-					const msg: any = entry.message;
-					if (msg?.role === "toolResult" && msg.toolName === "ralph_loop" && msg.details) {
-						return msg.details as RalphLoopDetails;
-					}
-				}
-				return null;
-			};
-
-			const details = resolveDetails();
-			if (!details) {
-				ctx.ui.notify("No ralph_loop run found in this session.", "warning");
-				return;
-			}
-
-			const entries = buildLoopEntries(details);
-
-			await ctx.ui.custom((tui, theme, _keybindings, done) => {
-				const wrapper = new Container();
-				wrapper.addChild(new Spacer(1));
-
-				const mainBox = new Box(1, 0, (text: string) => theme.bg("toolPendingBg", text));
-				const container = new Container();
-
-				container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-				container.addChild(new Spacer(1));
-				container.addChild(
-					new Text(
-						theme.fg("accent", theme.bold(" 🌀 Ralph Loop Viewer")) +
-							theme.fg("dim", ` (${entries.length} entries)`),
-						1,
-						0,
-					),
-				);
-				container.addChild(
-					new Text(theme.fg("dim", " ↑↓/jk scroll • g/G top/bottom • q close"), 1, 0),
-				);
-				container.addChild(new Spacer(1));
-				container.addChild(new DynamicBorder((s: string) => theme.fg("muted", s)));
-
-				const contentContainer = new Container();
-				const footerContainer = new Container();
-				container.addChild(contentContainer);
-				container.addChild(footerContainer);
-
-				mainBox.addChild(container);
-				wrapper.addChild(mainBox);
-				wrapper.addChild(new Spacer(1));
-
-				let scrollOffset = 0;
-				const maxVisible = 10;
-
-				const rebuild = () => {
-					contentContainer.children.length = 0;
-					footerContainer.children.length = 0;
-					contentContainer.addChild(new Spacer(1));
-
-					const visibleEntries = entries.slice(scrollOffset, scrollOffset + maxVisible);
-
-					const renderedEntries = renderLoopEntries(visibleEntries, theme, tui, ctx.cwd);
-					contentContainer.addChild(renderedEntries);
-
-					const start = entries.length === 0 ? 0 : scrollOffset + 1;
-					const end = Math.min(scrollOffset + maxVisible, entries.length);
-					const scrollInfo =
-						entries.length > maxVisible
-							? `  Showing ${start}-${end} of ${entries.length}`
-							: `  ${entries.length} entries`;
-					footerContainer.addChild(new DynamicBorder((s: string) => theme.fg("muted", s)));
-					footerContainer.addChild(new Text(theme.fg("dim", scrollInfo), 0, 0));
-					footerContainer.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-				};
-
-				rebuild();
-
-				return {
-					render: (width: number) => wrapper.render(width),
-					invalidate: () => wrapper.invalidate(),
-					handleInput: (data: string) => {
-						if (matchesKey(data, "escape") || data === "q" || data === "Q") {
-							done();
-						} else if (matchesKey(data, "up") || data === "k" || data === "K") {
-							scrollOffset = Math.max(0, scrollOffset - 1);
-							rebuild();
-							tui.requestRender();
-						} else if (matchesKey(data, "down") || data === "j" || data === "J") {
-							const maxOffset = Math.max(0, entries.length - maxVisible);
-							scrollOffset = Math.min(maxOffset, scrollOffset + 1);
-							rebuild();
-							tui.requestRender();
-						} else if (data === "g") {
-							scrollOffset = 0;
-							rebuild();
-							tui.requestRender();
-						} else if (data === "G") {
-							scrollOffset = Math.max(0, entries.length - maxVisible);
-							rebuild();
-							tui.requestRender();
-						}
-					},
-				};
-			});
 		},
 	});
 
@@ -2185,6 +2088,8 @@ export default function (pi: ExtensionAPI) {
 					break;
 				}
 				loopControl.steeringOnce = loopControl.steeringOnce.slice(steeringOnceCount);
+				loopControl.steeringSent = [];
+				loopControl.followUpsSent = [];
 				if (loopControl.paused && activeRuns.size === 0) {
 					clearPausedState(loopControl);
 				}
@@ -2230,6 +2135,11 @@ export default function (pi: ExtensionAPI) {
 			loopControl.status = "idle";
 			loopControl.abortController = null;
 			loopControl.paused = false;
+			loopControl.steering = [];
+			loopControl.steeringOnce = [];
+			loopControl.followUps = [];
+			loopControl.steeringSent = [];
+			loopControl.followUpsSent = [];
 			if (ctx.hasUI) {
 				ctx.ui.setStatus("ralph-loop", undefined);
 			}
