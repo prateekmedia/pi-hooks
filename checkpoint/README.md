@@ -5,7 +5,7 @@ Git-based checkpoint extension for [`pi-coding-agent`](https://www.npmjs.com/pac
 ## What it does
 
 - Saves the full worktree (tracked + untracked) at the start of every turn
-- Stores snapshots as Git refs so you can restore code while branching conversations
+- Stores snapshots as Git refs so you can restore code while forking conversations
 - Creates a "before restore" checkpoint automatically to avoid losing current work
 - Offers restore options: files + conversation, conversation only, or files only
 
@@ -53,7 +53,7 @@ npm test
 ## How it works
 
 1. **On turn start**: Creates a checkpoint capturing HEAD, index, and worktree state
-2. **On branch/tree navigation**: Prompts with restore options:
+2. **On fork/tree navigation**: Prompts with restore options:
    - **Restore all**: Restore files and navigate conversation
    - **Conversation only**: Keep current files, navigate conversation
    - **Code only**: Restore files, stay at current conversation position

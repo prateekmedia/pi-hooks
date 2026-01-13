@@ -2,7 +2,7 @@
  * Git-based checkpoint extension for pi-coding-agent
  *
  * Creates checkpoints at the start of each turn so you can restore
- * code state when branching conversations.
+ * code state when forking conversations.
  *
  * Features:
  * - Captures tracked, staged, AND untracked files (respects .gitignore)
@@ -146,7 +146,7 @@ function updateSessionInfo(state: CheckpointState, sessionManager: any): void {
 async function loadSessionChainCheckpoints(
   state: CheckpointState,
   cwd: string,
-  header: { id?: string; branchedFrom?: string } | undefined
+  header: { id?: string; parentSession?: string } | undefined
 ): Promise<CheckpointData[]> {
   if (state.pendingCheckpoint) await state.pendingCheckpoint;
 
@@ -158,16 +158,16 @@ async function loadSessionChainCheckpoints(
     sessionIds.push(state.currentSessionId);
   }
 
-  // Walk the branchedFrom chain
-  let branchedFrom = header?.branchedFrom;
-  while (branchedFrom) {
-    const match = branchedFrom.match(/_([0-9a-f-]{36})\.jsonl$/);
+  // Walk the parentSession chain (fork lineage)
+  let parentSession = header?.parentSession;
+  while (parentSession) {
+    const match = parentSession.match(/_([0-9a-f-]{36})\.jsonl$/);
     if (match && isSafeId(match[1]) && !sessionIds.includes(match[1])) {
       sessionIds.push(match[1]);
     }
     try {
-      const line = await readFirstLine(branchedFrom);
-      branchedFrom = line ? extractJsonField(line, "branchedFrom") : undefined;
+      const line = await readFirstLine(parentSession);
+      parentSession = line ? extractJsonField(line, "parentSession") : undefined;
     } catch {
       break;
     }
@@ -245,12 +245,13 @@ const restoreOptions: { label: string; value: RestoreChoice }[] = [
   { label: "Cancel", value: "cancel" },
 ];
 
-/** Handle restore prompt for branch/tree navigation */
+/** Handle restore prompt for fork/tree navigation */
 async function handleRestorePrompt(
   state: CheckpointState,
   ctx: any,
-  getTargetEntryId: () => string
-): Promise<{ cancel: true } | undefined> {
+  getTargetEntryId: () => string,
+  options: { codeOnly: "cancel" | "skipConversationRestore" }
+): Promise<{ cancel: true } | { skipConversationRestore: true } | undefined> {
   const checkpointLoadPromise = loadSessionChainCheckpoints(
     state,
     ctx.cwd,
@@ -286,7 +287,12 @@ async function handleRestorePrompt(
   const checkpoint = findClosestCheckpoint(checkpoints, targetTs);
 
   await saveAndRestore(state, ctx.cwd, checkpoint, ctx.ui.notify.bind(ctx.ui));
-  return selected === "code" ? { cancel: true } : undefined;
+
+  if (selected !== "code") return undefined;
+
+  return options.codeOnly === "skipConversationRestore"
+    ? { skipConversationRestore: true }
+    : { cancel: true };
 }
 
 // ============================================================================
@@ -316,19 +322,23 @@ export default function (pi: ExtensionAPI) {
     updateSessionInfo(state, ctx.sessionManager);
   });
 
-  pi.on("session_branch", async (_event, ctx) => {
+  pi.on("session_fork", async (_event, ctx) => {
     if (!state.gitAvailable) return;
     updateSessionInfo(state, ctx.sessionManager);
   });
 
-  pi.on("session_before_branch", async (event, ctx) => {
+  pi.on("session_before_fork", async (event, ctx) => {
     if (!state.gitAvailable) return undefined;
-    return handleRestorePrompt(state, ctx, () => event.entryId);
+    return handleRestorePrompt(state, ctx, () => event.entryId, {
+      codeOnly: "skipConversationRestore",
+    });
   });
 
   pi.on("session_before_tree", async (event, ctx) => {
     if (!state.gitAvailable) return undefined;
-    return handleRestorePrompt(state, ctx, () => event.preparation.targetId);
+    return handleRestorePrompt(state, ctx, () => event.preparation.targetId, {
+      codeOnly: "cancel",
+    });
   });
 
   pi.on("turn_start", async (event, ctx) => {

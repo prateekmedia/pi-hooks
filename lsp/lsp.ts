@@ -413,7 +413,7 @@ export default function (pi: ExtensionAPI) {
     updateLspStatus();
   });
 
-  pi.on("session_branch", async (_event, ctx) => {
+  pi.on("session_fork", async (_event, ctx) => {
     restoreHookState(ctx);
     updateLspStatus();
   });

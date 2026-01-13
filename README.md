@@ -22,7 +22,7 @@ Then run `npm install` in `lsp/` and `permission/` directories.
 
 ### `checkpoint/`
 
-Git-based checkpoint system for restoring code state when branching conversations.
+Git-based checkpoint system for restoring code state when forking conversations.
 
 - Captures repo state at the start of every turn (tracked, staged, and untracked files)
 - Stores checkpoints as Git refs for persistence across sessions
