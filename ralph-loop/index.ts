@@ -2289,10 +2289,7 @@ export default function (pi: ExtensionAPI) {
 			container.addChild(new DynamicBorder((s: string) => theme.fg("muted", s)));
 
 			const entriesComponent = renderLoopEntries(buildLoopEntries(details), theme, undefined, process.cwd(), expanded);
-			const contentComponent = expanded
-				? entriesComponent
-				: truncateComponentLines(entriesComponent, COLLAPSED_LINE_LIMIT, theme);
-			container.addChild(contentComponent);
+			container.addChild(entriesComponent);
 			container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
 
 			mainBox.addChild(container);

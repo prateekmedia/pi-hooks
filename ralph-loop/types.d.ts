@@ -46,6 +46,7 @@ declare module "@mariozechner/pi-coding-agent" {
 	export class ToolExecutionComponent {
 		constructor(...args: any[]);
 		updateResult(...args: any[]): void;
+		setExpanded(...args: any[]): void;
 	}
 	export class UserMessageComponent {
 		constructor(...args: any[]);
