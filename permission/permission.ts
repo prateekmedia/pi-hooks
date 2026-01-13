@@ -111,6 +111,32 @@ function getStatusText(level: PermissionLevel): string {
 }
 
 // ============================================================================
+// MODE DETECTION
+// ============================================================================
+
+function getPiModeFromArgv(argv: string[] = process.argv): string | undefined {
+  // Support both: --mode rpc and --mode=rpc
+  const eq = argv.find((a) => a.startsWith("--mode="));
+  if (eq) return eq.slice("--mode=".length);
+
+  const idx = argv.indexOf("--mode");
+  if (idx !== -1 && idx + 1 < argv.length) return argv[idx + 1];
+
+  return undefined;
+}
+
+function hasInteractiveUI(ctx: any): boolean {
+  if (!ctx?.hasUI) return false;
+
+  // In non-interactive modes (rpc/json/print), UI prompts are not desired.
+  // We still allow notifications, but block instead of asking.
+  const mode = getPiModeFromArgv()?.toLowerCase();
+  if (mode && mode !== "interactive") return false;
+
+  return true;
+}
+
+// ============================================================================
 // STATE MANAGEMENT
 // ============================================================================
 
@@ -232,7 +258,7 @@ export async function handlePermissionCommand(
   if (arg && LEVELS.includes(arg as PermissionLevel)) {
     const newLevel = arg as PermissionLevel;
 
-    if (ctx.hasUI) {
+    if (hasInteractiveUI(ctx)) {
       const scope = await ctx.ui.select("Save permission level to:", [
         "Session only",
         "Global (persists)",
@@ -250,7 +276,7 @@ export async function handlePermissionCommand(
   }
 
   // Show current level (no UI)
-  if (!ctx.hasUI) {
+  if (!hasInteractiveUI(ctx)) {
     ctx.ui.notify(
       `Current permission: ${LEVEL_INFO[state.currentLevel].label} (${LEVEL_INFO[state.currentLevel].desc})`,
       "info"
@@ -291,7 +317,7 @@ export async function handlePermissionModeCommand(
   if (arg && PERMISSION_MODES.includes(arg as PermissionMode)) {
     const newMode = arg as PermissionMode;
 
-    if (ctx.hasUI) {
+    if (hasInteractiveUI(ctx)) {
       const scope = await ctx.ui.select("Save permission mode to:", [
         "Session only",
         "Global (persists)",
@@ -308,7 +334,7 @@ export async function handlePermissionModeCommand(
     return;
   }
 
-  if (!ctx.hasUI) {
+  if (!hasInteractiveUI(ctx)) {
     ctx.ui.notify(
       `Current permission mode: ${PERMISSION_MODE_INFO[state.permissionMode].label} (${PERMISSION_MODE_INFO[state.permissionMode].desc})`,
       "info"
@@ -384,7 +410,7 @@ export async function handleBashToolCall(
 
   // Dangerous commands - always prompt unless in block mode
   if (classification.dangerous) {
-    if (!ctx.hasUI) {
+    if (!hasInteractiveUI(ctx)) {
       return {
         block: true,
         reason: `Dangerous command requires confirmation: ${command}
@@ -422,7 +448,7 @@ Use /permission-mode ask to enable confirmations.`
   const requiredInfo = LEVEL_INFO[requiredLevel];
 
   // Print mode: block
-  if (!ctx.hasUI) {
+  if (!hasInteractiveUI(ctx)) {
     return {
       block: true,
       reason: `Blocked by permission (${state.currentLevel}). Command: ${command}
@@ -480,7 +506,7 @@ export async function handleWriteToolCall(
   const message = `Requires Low: ${action} ${filePath}`;
 
   // Print mode: block
-  if (!ctx.hasUI) {
+  if (!hasInteractiveUI(ctx)) {
     return {
       block: true,
       reason: `Blocked by permission (${state.currentLevel}). ${action}: ${filePath}
