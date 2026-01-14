@@ -3,7 +3,7 @@
 /**
  * Ralph Loop Tool - Run subagent tasks in a loop.
  *
- * Executes subagent tasks (single, parallel, or chain) repeatedly while
+ * Executes subagent tasks (single or chain) repeatedly while
  * a condition command returns "true".
  */
 
@@ -21,14 +21,12 @@ import {
 	DynamicBorder,
 	ToolExecutionComponent,
 	UserMessageComponent,
+	formatSize,
+	truncateTail,
 } from "@mariozechner/pi-coding-agent";
-import { Box, Container, Spacer, Text, matchesKey, truncateToWidth } from "@mariozechner/pi-tui";
+import { Box, Container, Spacer, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
-
-const MAX_PARALLEL_TASKS = 8;
-const MAX_CONCURRENCY = 4;
-const COLLAPSED_LINE_LIMIT = 30;
 
 /**
  * Look up the provider for a model using `pi --list-models`.
@@ -76,74 +74,6 @@ function lookupProviderForModel(modelName: string): string | null {
 	}
 }
 
-function formatToolCall(
-	toolName: string,
-	args: Record<string, unknown>,
-	themeFg: (color: any, text: string) => string,
-): string {
-	const shortenPath = (p: string) => {
-		const home = os.homedir();
-		return p.startsWith(home) ? `~${p.slice(home.length)}` : p;
-	};
-
-	switch (toolName) {
-		case "bash": {
-			const command = (args.command as string) || "...";
-			const preview = command.length > 60 ? `${command.slice(0, 60)}...` : command;
-			return themeFg("muted", "$ ") + themeFg("toolOutput", preview);
-		}
-		case "read": {
-			const rawPath = (args.file_path || args.path || "...") as string;
-			const filePath = shortenPath(rawPath);
-			const offset = args.offset as number | undefined;
-			const limit = args.limit as number | undefined;
-			let text = themeFg("accent", filePath);
-			if (offset !== undefined || limit !== undefined) {
-				const startLine = offset ?? 1;
-				const endLine = limit !== undefined ? startLine + limit - 1 : "";
-				text += themeFg("warning", `:${startLine}${endLine ? `-${endLine}` : ""}`);
-			}
-			return themeFg("muted", "read ") + text;
-		}
-		case "write": {
-			const rawPath = (args.file_path || args.path || "...") as string;
-			const filePath = shortenPath(rawPath);
-			const content = (args.content || "") as string;
-			const lines = content.split("\n").length;
-			let text = themeFg("muted", "write ") + themeFg("accent", filePath);
-			if (lines > 1) text += themeFg("dim", ` (${lines} lines)`);
-			return text;
-		}
-		case "edit": {
-			const rawPath = (args.file_path || args.path || "...") as string;
-			return themeFg("muted", "edit ") + themeFg("accent", shortenPath(rawPath));
-		}
-		case "ls": {
-			const rawPath = (args.path || ".") as string;
-			return themeFg("muted", "ls ") + themeFg("accent", shortenPath(rawPath));
-		}
-		case "find": {
-			const pattern = (args.pattern || "*") as string;
-			const rawPath = (args.path || ".") as string;
-			return themeFg("muted", "find ") + themeFg("accent", pattern) + themeFg("dim", ` in ${shortenPath(rawPath)}`);
-		}
-		case "grep": {
-			const pattern = (args.pattern || "") as string;
-			const rawPath = (args.path || ".") as string;
-			return (
-				themeFg("muted", "grep ") +
-				themeFg("accent", `/${pattern}/`) +
-				themeFg("dim", ` in ${shortenPath(rawPath)}`)
-			);
-		}
-		default: {
-			const argsStr = JSON.stringify(args);
-			const preview = argsStr.length > 50 ? `${argsStr.slice(0, 50)}...` : argsStr;
-			return themeFg("accent", toolName) + themeFg("dim", ` ${preview}`);
-		}
-	}
-}
-
 interface UsageStats {
 	input: number;
 	output: number;
@@ -170,7 +100,7 @@ interface SingleResult {
 }
 
 interface SubagentDetails {
-	mode: "single" | "parallel" | "chain";
+	mode: "single" | "chain";
 	agentScope: AgentScope;
 	projectAgentsDir: string | null;
 	results: SingleResult[];
@@ -191,7 +121,7 @@ interface LoopPromptItem {
 }
 
 interface LoopPromptInfo {
-	mode: "single" | "parallel" | "chain";
+	mode: "single" | "chain";
 	items: LoopPromptItem[];
 }
 
@@ -247,28 +177,6 @@ function getFinalOutput(messages: Message[]): string {
 	return "";
 }
 
-type DisplayItem =
-	| { type: "text"; text: string }
-	| { type: "toolCall"; name: string; args: Record<string, any> }
-	| { type: "toolResult"; name: string; content: (TextContent | ImageContent)[]; isError: boolean };
-
-function getDisplayItems(messages: Message[]): DisplayItem[] {
-	const items: DisplayItem[] = [];
-	for (const msg of messages) {
-		if (msg.role === "assistant") {
-			for (const part of msg.content) {
-				if (part.type === "text") items.push({ type: "text", text: part.text });
-				else if (part.type === "toolCall") items.push({ type: "toolCall", name: part.name, args: part.arguments });
-			}
-		} else if (msg.role === "toolResult") {
-			items.push({ type: "toolResult", name: msg.toolName, content: msg.content, isError: msg.isError });
-		}
-	}
-	return items;
-}
-
-const BUILTIN_TOOL_NAMES = new Set(["bash", "read", "write", "edit", "ls", "find", "grep"]);
-
 type LoopViewerEntry =
 	| { type: "section"; text: string }
 	| { type: "meta"; text: string }
@@ -293,35 +201,19 @@ function buildEntryComponent(entry: LoopViewerEntry, theme: any, ui: any, cwd: s
 		case "user":
 			return new UserMessageComponent(entry.text);
 		case "assistant":
-			return new AssistantMessageComponent(entry.message as any, true);
+			return new AssistantMessageComponent(entry.message as any, false);
 		case "toolExecution": {
-			const isBuiltin = BUILTIN_TOOL_NAMES.has(entry.toolName);
-			if (isBuiltin) {
-				const toolComp = new ToolExecutionComponent(
-					entry.toolName,
-					entry.args,
-					{ showImages: false },
-					undefined,
-					ui,
-					cwd,
-				);
-				toolComp.updateResult(entry.result, Boolean(entry.result.isPartial));
-				toolComp.setExpanded(expanded);
-				return toolComp;
-			}
-			const argsText = JSON.stringify(entry.args ?? {}, null, 2);
-			const output = extractTextFromContent(entry.result.content).trim();
-			const container = new Container();
-			const header = theme.fg("accent", entry.toolName);
-			const argsLine = argsText && argsText !== "{}" ? theme.fg("dim", ` ${argsText}`) : "";
-			container.addChild(new Text(header + argsLine, 1, 0));
-			if (output) {
-				const color = entry.result.isError ? "error" : "toolOutput";
-				container.addChild(new Text(theme.fg(color, output), 1, 0));
-			} else if (entry.result.isPartial) {
-				container.addChild(new Text(theme.fg("dim", "(running...)"), 1, 0));
-			}
-			return container;
+			const toolComp = new ToolExecutionComponent(
+				entry.toolName,
+				entry.args,
+				{ showImages: false },
+				undefined,
+				ui,
+				cwd,
+			);
+			toolComp.updateResult(entry.result, Boolean(entry.result.isPartial));
+			toolComp.setExpanded(expanded);
+			return toolComp;
 		}
 	}
 }
@@ -337,115 +229,6 @@ function renderLoopEntries(entries: LoopViewerEntry[], theme: any, tui: any, cwd
 		}
 	}
 	return container;
-}
-
-const LANGUAGE_OVERRIDES: Record<string, string> = {
-	".ts": "typescript",
-	".tsx": "typescript",
-	".js": "javascript",
-	".jsx": "javascript",
-	".mjs": "javascript",
-	".cjs": "javascript",
-	".json": "json",
-	".md": "markdown",
-	".yml": "yaml",
-	".yaml": "yaml",
-	".toml": "toml",
-	".sh": "bash",
-	".bash": "bash",
-	".zsh": "bash",
-	".py": "python",
-	".go": "go",
-	".rs": "rust",
-	".java": "java",
-	".c": "c",
-	".h": "c",
-	".cpp": "cpp",
-	".cc": "cpp",
-	".cxx": "cpp",
-	".hpp": "cpp",
-	".hh": "cpp",
-	".hxx": "cpp",
-	".css": "css",
-	".html": "html",
-	".htm": "html",
-	".sql": "sql",
-	".rb": "ruby",
-	".php": "php",
-	".swift": "swift",
-};
-
-function getLanguageFromPath(filePath: string): string | null {
-	const ext = path.extname(filePath).toLowerCase();
-	return LANGUAGE_OVERRIDES[ext] ?? null;
-}
-
-function getLanguageForToolOutput(toolName: string, args: Record<string, any>): string | null {
-	if (toolName === "bash") return "bash";
-	const rawPath = (args.file_path || args.path) as string | undefined;
-	if (!rawPath) return null;
-	return getLanguageFromPath(rawPath);
-}
-
-function formatLoopEntriesText(loopDetails: RalphLoopDetails): string {
-	const entries = buildLoopEntries(loopDetails);
-	const themePlain = (_color: any, text: string) => text;
-	const lines: string[] = ["## Ralph Loop Details"];
-
-	for (const entry of entries) {
-		switch (entry.type) {
-			case "section":
-				lines.push("", `### ${entry.text}`);
-				break;
-			case "meta":
-			case "note":
-				lines.push(`- ${entry.text}`);
-				break;
-			case "user":
-				lines.push("", "**User:**", entry.text);
-				break;
-			case "assistant": {
-				const text = extractTextFromContent(entry.message.content).trim();
-				if (text) {
-					lines.push("", "**Assistant:**", text);
-				}
-				break;
-			}
-			case "toolExecution": {
-				const toolLine = formatToolCall(entry.toolName, entry.args, themePlain);
-				lines.push("", `**Tool:** ${toolLine}`);
-				const output = extractTextFromContent(entry.result.content).trim();
-				if (output) {
-					const language = getLanguageForToolOutput(entry.toolName, entry.args);
-					lines.push(language ? `\`\`\`${language}` : "```", output, "```");
-				} else if (entry.result.isPartial) {
-					lines.push("_(running...)_");
-				} else {
-					lines.push("_(no output)_");
-				}
-				break;
-			}
-		}
-	}
-
-	return lines.join("\n").trim();
-}
-
-
-function truncateComponentLines(component: any, maxLines: number, theme: any) {
-	return {
-		render: (width: number) => {
-			const lines = component.render(width);
-			if (lines.length <= maxLines) return lines;
-			const remaining = lines.length - maxLines;
-			const notice = theme.fg("muted", `... (${remaining} earlier lines, Ctrl+O to expand)`);
-			const truncated = lines.slice(Math.max(0, lines.length - maxLines));
-			return [truncateToWidth(notice, width), ...truncated];
-		},
-		invalidate: () => {
-			component.invalidate?.();
-		},
-	};
 }
 
 function buildLoopEntries(loopDetails: RalphLoopDetails): LoopViewerEntry[] {
@@ -494,6 +277,19 @@ function buildLoopEntries(loopDetails: RalphLoopDetails): LoopViewerEntry[] {
 			if (result.errorMessage) entries.push({ type: "note", text: `Error: ${result.errorMessage}` });
 
 			const toolCalls = new Map<string, { name: string; args: Record<string, any> }>();
+			const toolResults = new Map<
+				string,
+				{
+					toolName: string;
+					result: {
+						content: (TextContent | ImageContent)[];
+						details?: any;
+						isError: boolean;
+						isPartial?: boolean;
+					};
+				}
+			>();
+
 			for (const msg of result.messages) {
 				if (msg.role === "assistant") {
 					for (const part of msg.content) {
@@ -501,16 +297,49 @@ function buildLoopEntries(loopDetails: RalphLoopDetails): LoopViewerEntry[] {
 							toolCalls.set(part.id, { name: part.name, args: part.arguments });
 						}
 					}
+				} else if (msg.role === "toolResult" && msg.toolCallId) {
+					toolResults.set(msg.toolCallId, {
+						toolName: msg.toolName,
+						result: {
+							content: msg.content,
+							details: msg.details,
+							isError: msg.isError,
+							isPartial: msg.isPartial,
+						},
+					});
+				}
+			}
+
+			for (const msg of result.messages) {
+				if (msg.role === "assistant") {
 					entries.push({ type: "assistant", message: msg });
+					for (const part of msg.content) {
+						if (part.type !== "toolCall") continue;
+						const toolResult = toolResults.get(part.id);
+						entries.push({
+							type: "toolExecution",
+							toolName: part.name || toolResult?.toolName || "",
+							args: part.arguments ?? {},
+							result:
+								toolResult?.result ??
+								{
+									content: [],
+									details: undefined,
+									isError: false,
+									isPartial: true,
+								},
+						});
+					}
 				} else if (msg.role === "user") {
 					const text = extractTextFromContent(msg.content).trim();
 					entries.push({ type: "user", text: text || "(user message)" });
 				} else if (msg.role === "toolResult") {
-					const toolCall = toolCalls.get(msg.toolCallId);
+					// Render orphan tool results (e.g., when toolCall is missing)
+					if (msg.toolCallId && toolCalls.has(msg.toolCallId)) continue;
 					entries.push({
 						type: "toolExecution",
 						toolName: msg.toolName,
-						args: toolCall?.args ?? {},
+						args: {},
 						result: {
 							content: msg.content,
 							details: msg.details,
@@ -531,12 +360,6 @@ function buildLoopEntries(loopDetails: RalphLoopDetails): LoopViewerEntry[] {
 	return entries;
 }
 
-function formatTaskPreview(task: string, maxLength: number): string {
-	const singleLine = task.replace(/\s+/g, " ").trim();
-	if (singleLine.length <= maxLength) return singleLine;
-	return `${singleLine.slice(0, maxLength)}...`;
-}
-
 function formatSteeringText(messages: string[]): string | null {
 	const cleaned = messages.map((msg) => msg.trim()).filter(Boolean);
 	if (cleaned.length === 0) return null;
@@ -552,7 +375,6 @@ function appendSteeringToTask(task: string, steering: string | null): string {
 function cloneLoopParams(params: any): any {
 	return {
 		...params,
-		tasks: Array.isArray(params.tasks) ? params.tasks.map((task: any) => ({ ...task })) : undefined,
 		chain: Array.isArray(params.chain) ? params.chain.map((step: any) => ({ ...step })) : undefined,
 	};
 }
@@ -562,12 +384,6 @@ function applySteeringToParams(params: any, steering: string | null): any {
 	if (!steering) return nextParams;
 	if (typeof nextParams.task === "string") {
 		nextParams.task = appendSteeringToTask(nextParams.task, steering);
-	}
-	if (Array.isArray(nextParams.tasks)) {
-		nextParams.tasks = nextParams.tasks.map((task: any) => ({
-			...task,
-			task: appendSteeringToTask(task.task, steering),
-		}));
 	}
 	if (Array.isArray(nextParams.chain)) {
 		nextParams.chain = nextParams.chain.map((step: any) => ({
@@ -649,26 +465,6 @@ function resumeActiveRuns(control: LoopControlState, runs: Set<ActiveRun>): bool
 	return resumed;
 }
 
-async function mapWithConcurrencyLimit<TIn, TOut>(
-	items: TIn[],
-	concurrency: number,
-	fn: (item: TIn, index: number) => Promise<TOut>,
-): Promise<TOut[]> {
-	if (items.length === 0) return [];
-	const limit = Math.max(1, Math.min(concurrency, items.length));
-	const results: TOut[] = new Array(items.length);
-	let nextIndex = 0;
-	const workers = new Array(limit).fill(null).map(async () => {
-		while (true) {
-			const current = nextIndex++;
-			if (current >= items.length) return;
-			results[current] = await fn(items[current], current);
-		}
-	});
-	await Promise.all(workers);
-	return results;
-}
-
 function writePromptToTempFile(agentName: string, prompt: string): { dir: string; filePath: string } {
 	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
 	const safeName = agentName.replace(/[^\w.-]+/g, "_");
@@ -720,7 +516,7 @@ async function runSingleAgent(
 	}
 	const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 	const safeName = agentName.replace(/[^\w.-]+/g, "_");
-	// Use UUID for guaranteed uniqueness, especially important for parallel execution
+	// Use UUID for guaranteed uniqueness
 	const uuid = crypto.randomUUID().substring(0, 8);
 	const indexSuffix = taskIndex !== undefined ? `_idx${taskIndex}` : "";
 	const stepSuffix = step !== undefined ? `_step${step}` : "";
@@ -1098,14 +894,6 @@ const ThinkingLevel = StringEnum(["off", "minimal", "low", "medium", "high", "xh
 	description: "Thinking/reasoning level for the model",
 });
 
-const TaskItem = Type.Object({
-	agent: Type.String({ description: "Name of the agent to invoke" }),
-	task: Type.String({ description: "Task to delegate to the agent" }),
-	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
-	model: Type.Optional(Type.String({ description: "Override the agent's model (e.g., 'claude-opus-4-5', 'gpt-5.2-codex')" })),
-	thinking: Type.Optional(ThinkingLevel),
-});
-
 const ChainItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task with optional {previous} placeholder for prior output" }),
@@ -1117,20 +905,6 @@ const ChainItem = Type.Object({
 const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
 	description: 'Which agent directories to use. Default: "user". Use "both" to include project-local agents.',
 	default: "user",
-});
-
-const SubagentParams = Type.Object({
-	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke (for single mode)" })),
-	task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
-	tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution" })),
-	chain: Type.Optional(Type.Array(ChainItem, { description: "Array of {agent, task} for sequential execution" })),
-	agentScope: Type.Optional(AgentScopeSchema),
-	confirmProjectAgents: Type.Optional(
-		Type.Boolean({ description: "Prompt before running project-local agents. Default: true.", default: true }),
-	),
-	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
-	model: Type.Optional(Type.String({ description: "Override the agent's model for single mode (e.g., 'claude-opus-4-5', 'gpt-5.2-codex')" })),
-	thinking: Type.Optional(ThinkingLevel),
 });
 
 const DEFAULT_LOOP_MAX_ITERATIONS = Number.MAX_SAFE_INTEGER;
@@ -1147,7 +921,6 @@ const LoopParams = Type.Object({
 	sleepMs: Type.Optional(Type.Number({ description: `Sleep between iterations in ms (default ${DEFAULT_LOOP_SLEEP_MS}).` })),
 	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke (for single mode)" })),
 	task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
-	tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution" })),
 	chain: Type.Optional(Type.Array(ChainItem, { description: "Array of {agent, task} for sequential execution" })),
 	agentScope: Type.Optional(AgentScopeSchema),
 	confirmProjectAgents: Type.Optional(
@@ -1177,13 +950,8 @@ async function executeSubagentOnce(
 	const agents = discovery.agents;
 	const confirmProjectAgents = params.confirmProjectAgents ?? true;
 
-	const hasChain = (params.chain?.length ?? 0) > 0;
-	const hasTasks = (params.tasks?.length ?? 0) > 0;
-	const hasSingle = Boolean(params.agent && params.task);
-	const modeCount = Number(hasChain) + Number(hasTasks) + Number(hasSingle);
-
 	const makeDetails =
-		(mode: "single" | "parallel" | "chain") =>
+		(mode: "single" | "chain") =>
 		(results: SingleResult[]): SubagentDetails => ({
 			mode,
 			agentScope,
@@ -1191,10 +959,24 @@ async function executeSubagentOnce(
 			results,
 		});
 
+	const hasChain = (params.chain?.length ?? 0) > 0;
+	const hasTasks = (params.tasks?.length ?? 0) > 0;
+	const hasSingle = Boolean(params.agent && params.task);
+
+	if (hasTasks) {
+		return {
+			output: "Parallel mode is not supported. Use chain instead.",
+			details: makeDetails("single")([]),
+			isError: true,
+		};
+	}
+
+	const modeCount = Number(hasChain) + Number(hasSingle);
+
 	if (modeCount !== 1) {
 		const available = agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
 		return {
-			output: `Invalid parameters. Provide exactly one mode.\nAvailable agents: ${available}`,
+			output: `Invalid parameters. Provide exactly one mode (single or chain).\nAvailable agents: ${available}`,
 			details: makeDetails("single")([]),
 			isError: true,
 		};
@@ -1203,7 +985,6 @@ async function executeSubagentOnce(
 	if ((agentScope === "project" || agentScope === "both") && confirmProjectAgents && ctx.hasUI) {
 		const requestedAgentNames = new Set<string>();
 		if (params.chain) for (const step of params.chain) requestedAgentNames.add(step.agent);
-		if (params.tasks) for (const t of params.tasks) requestedAgentNames.add(t.agent);
 		if (params.agent) requestedAgentNames.add(params.agent);
 
 		const projectAgentsRequested = Array.from(requestedAgentNames)
@@ -1220,7 +1001,7 @@ async function executeSubagentOnce(
 			if (!ok)
 				return {
 					output: "Canceled: project-local agents not approved.",
-					details: makeDetails(hasChain ? "chain" : hasTasks ? "parallel" : "single")([]),
+					details: makeDetails(hasChain ? "chain" : "single")([]),
 					isError: true,
 				};
 		}
@@ -1291,101 +1072,6 @@ async function executeSubagentOnce(
 		return {
 			output: finalResult,
 			details: makeDetails("chain")(results),
-		};
-	}
-
-	if (params.tasks && params.tasks.length > 0) {
-		if (params.tasks.length > MAX_PARALLEL_TASKS)
-			return {
-				output: `Too many parallel tasks (${params.tasks.length}). Max is ${MAX_PARALLEL_TASKS}.`,
-				details: makeDetails("parallel")([]),
-				isError: true,
-			};
-
-		let allResults: SingleResult[] | null = null;
-		const emitParallelUpdate = () => {
-			if (!onUpdate || !allResults) return;
-			const running = allResults.filter((r) => r.exitCode === -1).length;
-			const done = allResults.filter((r) => r.exitCode !== -1).length;
-			onUpdate({
-				content: [
-					{ type: "text", text: `Parallel: ${done}/${allResults.length} done, ${running} running...` },
-				],
-				details: makeDetails("parallel")([...allResults]),
-			});
-		};
-
-		if (onUpdate) {
-			allResults = new Array(params.tasks.length);
-			for (let i = 0; i < params.tasks.length; i++) {
-				allResults[i] = {
-					agent: params.tasks[i].agent,
-					agentSource: "unknown",
-					task: params.tasks[i].task,
-					exitCode: -1,
-					messages: [],
-					stderr: "",
-					usage: {
-						input: 0,
-						output: 0,
-						cacheRead: 0,
-						cacheWrite: 0,
-						cost: 0,
-						contextTokens: 0,
-						turns: 0,
-					},
-				};
-			}
-			emitParallelUpdate();
-		}
-
-		const results = await mapWithConcurrencyLimit(
-			params.tasks,
-			MAX_CONCURRENCY,
-			async (t: any, index: number) => {
-				const result = await runSingleAgent(
-					ctx.cwd,
-					agents,
-					t.agent,
-					t.task,
-					t.cwd,
-					undefined,
-					signal,
-					onUpdate
-						? (partial) => {
-							if (partial.details?.results[0] && allResults) {
-								allResults[index] = partial.details.results[0];
-								emitParallelUpdate();
-							}
-						}
-						: undefined,
-					makeDetails("parallel"),
-					t.model,
-					t.thinking ?? params.thinking,
-					index,
-					registerActiveRun,
-					initialFollowUps,
-				);
-				if (allResults) {
-					allResults[index] = result;
-					emitParallelUpdate();
-				}
-				return result;
-			},
-		);
-
-		const successCount = results.filter((r) => r.exitCode === 0).length;
-		const fullOutputs = results.map((r) => {
-			const output = getFinalOutput(r.messages);
-			const status = r.exitCode === 0 ? "✓ completed" : "✗ failed";
-			return `[${r.agent}] ${status}:\n${output || "(no output)"}`;
-		});
-
-		return {
-			output: `Parallel execution: ${successCount}/${results.length} succeeded\n\n${"=".repeat(80)}\n\n${fullOutputs.join(
-				`\n\n${"=".repeat(80)}\n\n`,
-			)}`,
-			details: makeDetails("parallel")(results),
 		};
 	}
 
@@ -1479,7 +1165,6 @@ async function confirmProjectAgentsOnce(params: any, ctx: any): Promise<boolean>
 	const agents = discovery.agents;
 	const requestedAgentNames = new Set<string>();
 	if (params.chain) for (const step of params.chain) requestedAgentNames.add(step.agent);
-	if (params.tasks) for (const t of params.tasks) requestedAgentNames.add(t.agent);
 	if (params.agent) requestedAgentNames.add(params.agent);
 
 	const projectAgentsRequested = Array.from(requestedAgentNames)
@@ -1506,6 +1191,51 @@ function extractTextFromContent(content: any): string {
 			.join("\n");
 	}
 	return "";
+}
+
+function writeLargeOutputToTempFile(prefix: string, output: string): string | null {
+	try {
+		const id = crypto.randomBytes(8).toString("hex");
+		const filePath = path.join(os.tmpdir(), `pi-${prefix}-${id}.log`);
+		fs.writeFileSync(filePath, output, { encoding: "utf-8", mode: 0o600 });
+		return filePath;
+	} catch {
+		return null;
+	}
+}
+
+function formatTailTruncationNotice(truncation: any, fullOutputPath: string | null, fullOutput: string): string {
+	if (!truncation?.truncated) return "";
+	const startLine = truncation.totalLines - truncation.outputLines + 1;
+	const endLine = truncation.totalLines;
+	const fullOutputLabel = fullOutputPath ? `Full output: ${fullOutputPath}` : "Full output: (failed to save)";
+
+	if (truncation.lastLinePartial) {
+		const lastLine = fullOutput.split("\n").pop() || "";
+		let lastLineBytes = 0;
+		try {
+			lastLineBytes = new TextEncoder().encode(lastLine).length;
+		} catch {
+			lastLineBytes = lastLine.length;
+		}
+		const lastLineSize = formatSize(lastLineBytes);
+		return `[Showing last ${formatSize(truncation.outputBytes)} of line ${endLine} (line is ${lastLineSize}). ${fullOutputLabel}]`;
+	}
+	if (truncation.truncatedBy === "lines") {
+		return `[Showing lines ${startLine}-${endLine} of ${truncation.totalLines}. ${fullOutputLabel}]`;
+	}
+	return `[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(truncation.maxBytes)} limit). ${fullOutputLabel}]`;
+}
+
+function formatLastOutputForSummary(lastOutput: string): { text: string; fullOutputPath: string | null } {
+	const truncation = truncateTail(lastOutput);
+	let outputText = truncation.content || "(no output)";
+	if (!truncation.truncated) return { text: outputText, fullOutputPath: null };
+
+	const fullOutputPath = writeLargeOutputToTempFile("ralph-loop", lastOutput);
+	const notice = formatTailTruncationNotice(truncation, fullOutputPath, lastOutput);
+	if (notice) outputText += `\n\n${notice}`;
+	return { text: outputText, fullOutputPath };
 }
 
 function getLastUserText(ctx: any): string | null {
@@ -1550,17 +1280,6 @@ function buildLoopPromptInfo(params: any): LoopPromptInfo {
 				task: step.task,
 				model: step.model,
 				thinking: step.thinking,
-			})),
-		};
-	}
-	if (Array.isArray(params.tasks) && params.tasks.length > 0) {
-		return {
-			mode: "parallel",
-			items: params.tasks.map((task: any) => ({
-				agent: task.agent,
-				task: task.task,
-				model: task.model,
-				thinking: task.thinking,
 			})),
 		};
 	}
@@ -1831,7 +1550,7 @@ export default function (pi: ExtensionAPI) {
 		label: "Ralph Loop",
 		description: [
 			"Run subagent tasks in a loop while a condition command prints 'true' to continue (anything else stops).",
-			"Supports single, parallel, and chain modes.",
+			"Supports single and chain modes.",
 			"Supports model/thinking overrides like subagent.",
 			"Defaults to agent 'worker' and the latest user message when agent/task are omitted.",
 			"If conditionCommand is omitted, it is inferred from the task text or defaults to 'echo true'.",
@@ -1881,17 +1600,26 @@ export default function (pi: ExtensionAPI) {
 			const hasChain = (params.chain?.length ?? 0) > 0;
 			const hasTasks = (params.tasks?.length ?? 0) > 0;
 			const hasSingle = Boolean(params.agent || params.task);
-			const modeCount = Number(hasChain) + Number(hasTasks) + Number(hasSingle);
 
-			if (modeCount > 1) {
+			if (hasTasks) {
 				return {
-					content: [{ type: "text", text: "Provide exactly one mode (single, parallel, or chain)." }],
+					content: [{ type: "text", text: "Parallel mode is not supported. Use chain instead." }],
 					details: buildDetails({ stopReason: "invalid-params" }),
 					isError: true,
 				};
 			}
 
-			if (!hasChain && !hasTasks && !hasSingle) {
+			const modeCount = Number(hasChain) + Number(hasSingle);
+
+			if (modeCount > 1) {
+				return {
+					content: [{ type: "text", text: "Provide exactly one mode (single or chain)." }],
+					details: buildDetails({ stopReason: "invalid-params" }),
+					isError: true,
+				};
+			}
+
+			if (!hasChain && !hasSingle) {
 				const inferredTask = getLastUserText(ctx);
 				const defaultAgent = pickDefaultAgent(agents);
 				if (!inferredTask || !defaultAgent) {
@@ -1899,7 +1627,7 @@ export default function (pi: ExtensionAPI) {
 						content: [
 							{
 								type: "text",
-								text: "Unable to infer task or agent. Provide agent/task, tasks, or chain.",
+								text: "Unable to infer task or agent. Provide agent/task or chain.",
 							},
 						],
 						details: buildDetails({ stopReason: "missing-task" }),
@@ -1945,12 +1673,6 @@ export default function (pi: ExtensionAPI) {
 					thinking: step.thinking ?? loopParams.thinking,
 				}));
 			}
-			if (Array.isArray(loopParams.tasks)) {
-				loopParams.tasks = loopParams.tasks.map((task: any) => ({
-					...task,
-					thinking: task.thinking ?? loopParams.thinking,
-				}));
-			}
 
 			const promptInfo = buildLoopPromptInfo(loopParams);
 
@@ -1967,7 +1689,6 @@ export default function (pi: ExtensionAPI) {
 				let textForInference: string | undefined;
 				if (typeof loopParams.task === "string") textForInference = loopParams.task;
 				else if (Array.isArray(loopParams.chain) && loopParams.chain.length > 0) textForInference = loopParams.chain[0].task;
-				else if (Array.isArray(loopParams.tasks) && loopParams.tasks.length > 0) textForInference = loopParams.tasks[0].task;
 				const inferred = inferConditionCommandFromText(textForInference);
 				if (inferred) {
 					conditionCommand = inferred;
@@ -2206,7 +1927,12 @@ export default function (pi: ExtensionAPI) {
 			if (lastCondition.stderr) summaryLines.push(`Condition stderr: ${lastCondition.stderr}`);
 			if (lastCondition.exitCode !== 0) summaryLines.push(`Condition exit code: ${lastCondition.exitCode}`);
 			if (errorMessage && errorMessage !== lastOutput) summaryLines.push(`Error: ${errorMessage}`);
-			if (lastOutput) summaryLines.push(`Last output:\n${lastOutput}`);
+			let lastOutputFullPath: string | null = null;
+			if (lastOutput) {
+				const formatted = formatLastOutputForSummary(lastOutput);
+				lastOutputFullPath = formatted.fullOutputPath;
+				summaryLines.push(`Last output:\n${formatted.text}`);
+			}
 
 			loopControl.status = "idle";
 			loopControl.abortController = null;
@@ -2221,10 +1947,10 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const finalDetails = buildLoopDetails(iterations);
-			const exportText = formatLoopEntriesText(finalDetails);
-			const summaryText = exportText
-				? `${summaryLines.join("\n\n")}\n\nDetails:\n${exportText}`
-				: summaryLines.join("\n\n");
+			if (lastOutputFullPath) {
+				(finalDetails as any).lastOutputPath = lastOutputFullPath;
+			}
+			const summaryText = summaryLines.join("\n\n");
 			const isError = stopReason === "error" || stopReason === "aborted";
 			return {
 				content: [{ type: "text", text: summaryText }],
@@ -2236,15 +1962,8 @@ export default function (pi: ExtensionAPI) {
 		renderCall(args, theme) {
 			const scope: AgentScope = args.agentScope ?? "user";
 			const hasChain = Array.isArray(args.chain) && args.chain.length > 0;
-			const hasTasks = Array.isArray(args.tasks) && args.tasks.length > 0;
 			const hasSingle = Boolean(args.agent || args.task);
-			const mode = hasChain
-				? `chain (${args.chain.length} steps)`
-				: hasTasks
-					? `parallel (${args.tasks.length} tasks)`
-					: hasSingle
-						? `single ${args.agent || "(auto)"}`
-						: "auto";
+			const mode = hasChain ? `chain (${args.chain.length} steps)` : hasSingle ? `single ${args.agent || "(auto)"}` : "auto";
 			const condition = args.conditionCommand ? `cond: ${args.conditionCommand}` : "cond: (auto)";
 			const maxIterations = args.maxIterations ?? DEFAULT_LOOP_MAX_ITERATIONS;
 			const sleepMs = args.sleepMs ?? DEFAULT_LOOP_SLEEP_MS;

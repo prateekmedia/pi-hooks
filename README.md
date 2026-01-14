@@ -83,7 +83,7 @@ Looped subagent execution via the `ralph_loop` tool.
 
 <img src="assets/ralph-loop.png" alt="Ralph Loop Extension" width="500">
 
-- Runs single, parallel, or chain subagent tasks until a condition returns false
+- Runs single or chain subagent tasks until a condition returns false
 - Takes a prompt and exit condition (exit condition optional)
 - Can supply max iterations and minimum delay between each
 - Optionally supply model and thinking

@@ -8,6 +8,10 @@ declare module "node:crypto" {
 	export = crypto;
 }
 
+declare namespace fs {
+	export type Dirent = any;
+}
+
 declare module "node:fs" {
 	const fs: any;
 	export = fs;
@@ -37,6 +41,8 @@ declare module "@mariozechner/pi-ai" {
 declare module "@mariozechner/pi-coding-agent" {
 	export type ExtensionAPI = any;
 	export const getMarkdownTheme: any;
+	export const formatSize: any;
+	export const truncateTail: any;
 	export class AssistantMessageComponent {
 		constructor(...args: any[]);
 	}

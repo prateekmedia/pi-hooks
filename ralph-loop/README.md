@@ -22,6 +22,7 @@ No npm install is required for this extension (pi provides the runtime deps).
 
 ## Features
 
+- Runs single or chain subagent tasks until a condition returns false
 - Takes a prompt and exit condition (exit condition optional)
 - Can supply max iterations and minimum delay between each
 - Optionally supply model and thinking
@@ -45,7 +46,7 @@ Example prompt: "Use ralph loop to check the current time five times, sleeping 1
 ## Examples
 
 - Use chain ralph loop to implement a quick fix, then write a brief self-review of the patch.
-- Use parallel ralph loop to summarize `README.md` and `CONTRIBUTING.md` at the same time.
+- Use chain ralph loop to summarize `README.md`, then `CONTRIBUTING.md`.
 
 ## Notes
 
