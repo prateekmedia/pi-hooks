@@ -24,6 +24,7 @@ type HookMode = "edit_write" | "agent_end" | "disabled";
 
 const DIAGNOSTICS_WAIT_MS = 3000;
 const DIAGNOSTICS_PREVIEW_LINES = 10;
+const LSP_WORKING_MESSAGE = "LSP: Working...";
 const DIM = "\x1b[2m", GREEN = "\x1b[32m", YELLOW = "\x1b[33m", RESET = "\x1b[0m";
 const DEFAULT_HOOK_MODE: HookMode = "agent_end";
 const SETTINGS_NAMESPACE = "lsp";
@@ -60,6 +61,7 @@ export default function (pi: ExtensionAPI) {
   let activity: LspActivity = "idle";
   let diagnosticsAbort: AbortController | null = null;
   let shuttingDown = false;
+  let lspWorkingMessageActive = false;
 
   const touchedFiles: Map<string, boolean> = new Map();
   const globalSettingsPath = path.join(os.homedir(), ".pi", "agent", "settings.json");
@@ -172,6 +174,22 @@ export default function (pi: ExtensionAPI) {
   function setActivity(next: LspActivity): void {
     activity = next;
     updateLspStatus();
+  }
+
+  function showLspWorkingMessage(ctx: ExtensionContext): void {
+    if (!ctx.hasUI) return;
+    const ui = ctx.ui as { setWorkingMessage?: (text?: string) => void };
+    if (!ui.setWorkingMessage) return;
+    ui.setWorkingMessage(LSP_WORKING_MESSAGE);
+    lspWorkingMessageActive = true;
+  }
+
+  function clearLspWorkingMessage(ctx: ExtensionContext): void {
+    if (!lspWorkingMessageActive) return;
+    lspWorkingMessageActive = false;
+    if (!ctx.hasUI) return;
+    const ui = ctx.ui as { setWorkingMessage?: (text?: string) => void };
+    ui.setWorkingMessage?.();
   }
 
   function updateLspStatus(): void {
@@ -437,9 +455,10 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  pi.on("agent_start", async () => {
+  pi.on("agent_start", async (_event, ctx) => {
     diagnosticsAbort?.abort();
     diagnosticsAbort = null;
+    clearLspWorkingMessage(ctx);
     setActivity("idle");
     touchedFiles.clear();
   });
@@ -471,7 +490,7 @@ export default function (pi: ExtensionAPI) {
     diagnosticsAbort = abort;
 
     setActivity("working");
-    if (ctx.hasUI) (ctx.ui as any).setWorkingMessage?.("LSP: Working...");
+    showLspWorkingMessage(ctx);
 
     const files = Array.from(touchedFiles.entries());
     touchedFiles.clear();
@@ -505,7 +524,7 @@ export default function (pi: ExtensionAPI) {
     } finally {
       if (diagnosticsAbort === abort) diagnosticsAbort = null;
       if (!shuttingDown) setActivity("idle");
-      if (ctx.hasUI) (ctx.ui as any).setWorkingMessage?.();
+      clearLspWorkingMessage(ctx);
     }
   });
 
