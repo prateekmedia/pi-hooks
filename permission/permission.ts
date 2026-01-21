@@ -37,6 +37,9 @@
  */
 
 import { exec } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import {
   type PermissionLevel,
@@ -134,6 +137,30 @@ function hasInteractiveUI(ctx: any): boolean {
   if (mode && mode !== "interactive") return false;
 
   return true;
+}
+
+function isQuietMode(ctx: any): boolean {
+  if (ctx?.quiet || ctx?.isQuiet) return true;
+  if (ctx?.ui?.quiet || ctx?.ui?.isQuiet) return true;
+  if (ctx?.settings?.quietStartup || ctx?.settings?.quiet) return true;
+
+  const envQuiet = process.env.PI_QUIET?.toLowerCase();
+  if (envQuiet && ["1", "true", "yes"].includes(envQuiet)) return true;
+
+  if (process.argv.includes("--quiet") || process.argv.includes("-q")) return true;
+
+  return isQuietStartupFromSettings();
+}
+
+function isQuietStartupFromSettings(): boolean {
+  const settingsPath = path.join(os.homedir(), ".pi", "agent", "settings.json");
+  try {
+    const raw = fs.readFileSync(settingsPath, "utf-8");
+    const settings = JSON.parse(raw) as { quietStartup?: boolean };
+    return settings.quietStartup === true;
+  } catch {
+    return false;
+  }
 }
 
 // ============================================================================
@@ -389,7 +416,7 @@ export function handleSessionStart(state: PermissionState, ctx: any): void {
     }
     if (state.currentLevel === "bypassed") {
       ctx.ui.notify("⚠️ Permission bypassed - all checks disabled!", "warning");
-    } else {
+    } else if (!isQuietMode(ctx)) {
       ctx.ui.notify(`Permission: ${LEVEL_INFO[state.currentLevel].label} (use /permission to change)`, "info");
     }
     if (state.permissionMode === "block") {
