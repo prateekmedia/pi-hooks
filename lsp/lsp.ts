@@ -22,7 +22,15 @@ import { LSP_SERVERS, formatDiagnostic, getOrCreateManager, shutdownManager } fr
 type HookScope = "session" | "global";
 type HookMode = "edit_write" | "agent_end" | "disabled";
 
-const DIAGNOSTICS_WAIT_MS = 3000;
+const DIAGNOSTICS_WAIT_MS_DEFAULT = 3000;
+
+function diagnosticsWaitMsForFile(filePath: string): number {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".kt" || ext === ".kts") return 30000;
+  if (ext === ".swift") return 20000;
+  if (ext === ".rs") return 20000;
+  return DIAGNOSTICS_WAIT_MS_DEFAULT;
+}
 const DIAGNOSTICS_PREVIEW_LINES = 10;
 const LSP_WORKING_MESSAGE = "LSP: Working...";
 const DIM = "\x1b[2m", GREEN = "\x1b[32m", YELLOW = "\x1b[33m", RESET = "\x1b[0m";
@@ -31,7 +39,19 @@ const SETTINGS_NAMESPACE = "lsp";
 const LSP_CONFIG_ENTRY = "lsp-hook-config";
 
 const WARMUP_MAP: Record<string, string> = {
-  "pubspec.yaml": ".dart", "package.json": ".ts", "pyproject.toml": ".py", "go.mod": ".go", "Cargo.toml": ".rs",
+  "pubspec.yaml": ".dart",
+  "package.json": ".ts",
+  "pyproject.toml": ".py",
+  "go.mod": ".go",
+  "Cargo.toml": ".rs",
+  "settings.gradle": ".kt",
+  "settings.gradle.kts": ".kt",
+  "build.gradle": ".kt",
+  "build.gradle.kts": ".kt",
+  "pom.xml": ".kt",
+  "gradlew": ".kt",
+  "gradle.properties": ".kt",
+  "Package.swift": ".swift",
 };
 
 const MODE_LABELS: Record<HookMode, string> = {
@@ -311,7 +331,7 @@ export default function (pi: ExtensionAPI) {
     if (!absPath) return undefined;
 
     try {
-      const result = await manager.touchFileAndWait(absPath, DIAGNOSTICS_WAIT_MS);
+      const result = await manager.touchFileAndWait(absPath, diagnosticsWaitMsForFile(absPath));
       if (!result.receivedResponse) return undefined;
 
       const diagnostics = includeWarnings

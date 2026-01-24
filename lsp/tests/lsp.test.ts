@@ -99,6 +99,15 @@ test("LANGUAGE_IDS: Rust extension", async () => {
   assertEquals(LANGUAGE_IDS[".rs"], "rust", ".rs should map to rust");
 });
 
+test("LANGUAGE_IDS: Kotlin extensions", async () => {
+  assertEquals(LANGUAGE_IDS[".kt"], "kotlin", ".kt should map to kotlin");
+  assertEquals(LANGUAGE_IDS[".kts"], "kotlin", ".kts should map to kotlin");
+});
+
+test("LANGUAGE_IDS: Swift extension", async () => {
+  assertEquals(LANGUAGE_IDS[".swift"], "swift", ".swift should map to swift");
+});
+
 test("LANGUAGE_IDS: Python extensions", async () => {
   assertEquals(LANGUAGE_IDS[".py"], "python", ".py should map to python");
   assertEquals(LANGUAGE_IDS[".pyi"], "python", ".pyi should map to python");
@@ -139,6 +148,19 @@ test("LSP_SERVERS: has Gopls server", async () => {
   const server = LSP_SERVERS.find(s => s.id === "gopls");
   assert(server !== undefined, "Should have gopls server");
   assertIncludes(server!.extensions, ".go", "Should handle .go");
+});
+
+test("LSP_SERVERS: has Kotlin server", async () => {
+  const server = LSP_SERVERS.find(s => s.id === "kotlin");
+  assert(server !== undefined, "Should have kotlin server");
+  assertIncludes(server!.extensions, ".kt", "Should handle .kt");
+  assertIncludes(server!.extensions, ".kts", "Should handle .kts");
+});
+
+test("LSP_SERVERS: has Swift server", async () => {
+  const server = LSP_SERVERS.find(s => s.id === "swift");
+  assert(server !== undefined, "Should have swift server");
+  assertIncludes(server!.extensions, ".swift", "Should handle .swift");
 });
 
 test("LSP_SERVERS: has Pyright server", async () => {
@@ -338,6 +360,81 @@ test("gopls: finds go.mod when go.work not present (bug fix verification)", asyn
     // so it would return undefined without checking go.mod
     // After fix: if go.work not found, falls through to check go.mod
     assertEquals(root, dir, "Should find go.mod when go.work is not present");
+  });
+});
+
+// ============================================================================
+// Kotlin root detection tests
+// ============================================================================
+
+test("kotlin: finds root with settings.gradle.kts", async () => {
+  await withTempDir({
+    "settings.gradle.kts": "rootProject.name = \"myapp\"",
+    "app/src/main/kotlin/Main.kt": "fun main() {}",
+  }, async (dir) => {
+    const server = LSP_SERVERS.find(s => s.id === "kotlin")!;
+    const root = server.findRoot(join(dir, "app/src/main/kotlin/Main.kt"), dir);
+    assertEquals(root, dir, "Should find root at settings.gradle.kts location");
+  });
+});
+
+test("kotlin: prefers settings.gradle(.kts) over nested build.gradle", async () => {
+  await withTempDir({
+    "settings.gradle": "rootProject.name = 'root'",
+    "app/build.gradle": "plugins {}",
+    "app/src/main/kotlin/Main.kt": "fun main() {}",
+  }, async (dir) => {
+    const server = LSP_SERVERS.find(s => s.id === "kotlin")!;
+    const root = server.findRoot(join(dir, "app/src/main/kotlin/Main.kt"), dir);
+    assertEquals(root, dir, "Should prefer settings.gradle at workspace root");
+  });
+});
+
+test("kotlin: finds root with pom.xml", async () => {
+  await withTempDir({
+    "pom.xml": "<project></project>",
+    "src/main/kotlin/Main.kt": "fun main() {}",
+  }, async (dir) => {
+    const server = LSP_SERVERS.find(s => s.id === "kotlin")!;
+    const root = server.findRoot(join(dir, "src/main/kotlin/Main.kt"), dir);
+    assertEquals(root, dir, "Should find root at pom.xml location");
+  });
+});
+
+// ============================================================================
+// Swift root detection tests
+// ============================================================================
+
+test("swift: finds root with Package.swift", async () => {
+  await withTempDir({
+    "Package.swift": "// swift-tools-version: 5.9",
+    "Sources/App/main.swift": "print(\"hi\")",
+  }, async (dir) => {
+    const server = LSP_SERVERS.find(s => s.id === "swift")!;
+    const root = server.findRoot(join(dir, "Sources/App/main.swift"), dir);
+    assertEquals(root, dir, "Should find root at Package.swift location");
+  });
+});
+
+test("swift: finds root with Xcode project", async () => {
+  await withTempDir({
+    "MyApp.xcodeproj/project.pbxproj": "// pbxproj",
+    "MyApp/main.swift": "print(\"hi\")",
+  }, async (dir) => {
+    const server = LSP_SERVERS.find(s => s.id === "swift")!;
+    const root = server.findRoot(join(dir, "MyApp/main.swift"), dir);
+    assertEquals(root, dir, "Should find root at Xcode project location");
+  });
+});
+
+test("swift: finds root with Xcode workspace", async () => {
+  await withTempDir({
+    "MyApp.xcworkspace/contents.xcworkspacedata": "<Workspace/>",
+    "MyApp/main.swift": "print(\"hi\")",
+  }, async (dir) => {
+    const server = LSP_SERVERS.find(s => s.id === "swift")!;
+    const root = server.findRoot(join(dir, "MyApp/main.swift"), dir);
+    assertEquals(root, dir, "Should find root at Xcode workspace location");
   });
 });
 

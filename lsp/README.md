@@ -8,7 +8,7 @@ Language Server Protocol integration for pi-coding-agent.
 - **Tool** (`lsp-tool.ts`): On-demand LSP queries (definitions, references, hover, symbols, diagnostics, signatures)
 - Manages one LSP server per project root and reuses them across turns
 - **Efficient**: Bounded memory usage via LRU cache and idle file cleanup
-- Supports TypeScript/JavaScript, Vue, Svelte, Dart/Flutter, Python, Go, and Rust
+- Supports TypeScript/JavaScript, Vue, Svelte, Dart/Flutter, Python, Go, Kotlin, Swift, and Rust
 
 ## Supported Languages
 
@@ -20,6 +20,8 @@ Language Server Protocol integration for pi-coding-agent.
 | Dart/Flutter | `dart language-server` | `pubspec.yaml` |
 | Python | `pyright-langserver` | `pyproject.toml`, `requirements.txt` |
 | Go | `gopls` | `go.mod` |
+| Kotlin | `kotlin-ls` | `settings.gradle(.kts)`, `build.gradle(.kts)`, `pom.xml` |
+| Swift | `sourcekit-lsp` | `Package.swift`, Xcode (`*.xcodeproj` / `*.xcworkspace`) |
 | Rust | `rust-analyzer` | `Cargo.toml` |
 
 ### Known Limitations
@@ -77,6 +79,13 @@ npm i -g pyright
 
 # Go (install gopls via go install)
 go install golang.org/x/tools/gopls@latest
+
+# Kotlin (kotlin-ls)
+brew install JetBrains/utils/kotlin-lsp
+
+# Swift (sourcekit-lsp; macOS)
+# Usually available via Xcode / Command Line Tools
+xcrun sourcekit-lsp --help
 
 # Rust (install via rustup)
 rustup component add rust-analyzer

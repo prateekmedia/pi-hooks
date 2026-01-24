@@ -13,6 +13,8 @@
  *   - Svelte (svelteserver)
  *   - Python (pyright-langserver)
  *   - Go (gopls)
+ *   - Kotlin (kotlin-ls)
+ *   - Swift (sourcekit-lsp)
  *   - Rust (rust-analyzer)
  *
  * Usage:
@@ -29,7 +31,16 @@ import { Text } from "@mariozechner/pi-tui";
 import { getOrCreateManager, formatDiagnostic, filterDiagnosticsBySeverity, uriToPath, resolvePosition, type SeverityFilter } from "./lsp-core.js";
 
 const PREVIEW_LINES = 10;
-const DIAGNOSTICS_WAIT_MS = 3000;
+
+const DIAGNOSTICS_WAIT_MS_DEFAULT = 3000;
+
+function diagnosticsWaitMsForFile(filePath: string): number {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".kt" || ext === ".kts") return 30000;
+  if (ext === ".swift") return 20000;
+  if (ext === ".rs") return 20000;
+  return DIAGNOSTICS_WAIT_MS_DEFAULT;
+}
 
 const ACTIONS = ["definition", "references", "hover", "symbols", "diagnostics", "workspace-diagnostics", "signature", "rename", "codeAction"] as const;
 const SEVERITY_FILTERS = ["all", "error", "warning", "info", "hint"] as const;
@@ -230,16 +241,19 @@ Use bash to find files: find src -name "*.ts" -type f`,
             return { content: [{ type: "text", text: `action: symbols\n${qLine}${payload}` }], details: symbols };
           }
           case "diagnostics": {
-            const result = await abortable(manager.touchFileAndWait(file!, DIAGNOSTICS_WAIT_MS), signal);
+            const result = await abortable(manager.touchFileAndWait(file!, diagnosticsWaitMsForFile(file!)), signal);
             const filtered = filterDiagnosticsBySeverity(result.diagnostics, sevFilter);
-            const payload = !result.receivedResponse
-              ? "Timeout: LSP server did not respond. Try again."
-              : filtered.length ? filtered.map(formatDiagnostic).join("\n") : "No diagnostics.";
+            const payload = (result as any).unsupported
+              ? `Unsupported: ${(result as any).error || "No LSP for this file."}`
+              : !result.receivedResponse
+                ? "Timeout: LSP server did not respond. Try again."
+                : filtered.length ? filtered.map(formatDiagnostic).join("\n") : "No diagnostics.";
             return { content: [{ type: "text", text: `action: diagnostics\n${sevLine}${payload}` }], details: { ...result, diagnostics: filtered } };
           }
           case "workspace-diagnostics": {
             if (!files?.length) throw new Error('Action "workspace-diagnostics" requires a "files" array.');
-            const result = await abortable(manager.getDiagnosticsForFiles(files, DIAGNOSTICS_WAIT_MS), signal);
+            const waitMs = Math.max(...files.map(diagnosticsWaitMsForFile));
+            const result = await abortable(manager.getDiagnosticsForFiles(files, waitMs), signal);
             const out: string[] = [];
             let errors = 0, warnings = 0, filesWithIssues = 0;
 

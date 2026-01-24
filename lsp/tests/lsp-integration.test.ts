@@ -311,6 +311,67 @@ func main() {
 });
 
 // ============================================================================
+// Kotlin
+// ============================================================================
+
+test("kotlin: detects syntax errors", async () => {
+  if (!commandExists("kotlin-language-server")) {
+    skip("kotlin-language-server not installed");
+  }
+
+  const dir = await mkdtemp(join(tmpdir(), "lsp-kt-"));
+  const manager = new LSPManager(dir);
+
+  try {
+    // Minimal Gradle markers so the LSP picks a root
+    await writeFile(join(dir, "settings.gradle.kts"), "rootProject.name = \"test\"\n");
+    await writeFile(join(dir, "build.gradle.kts"), "// empty\n");
+
+    await mkdir(join(dir, "src/main/kotlin"), { recursive: true });
+    const file = join(dir, "src/main/kotlin/Main.kt");
+
+    // Syntax error
+    await writeFile(file, "fun main() { val x = }\n");
+
+    const { diagnostics, receivedResponse } = await manager.touchFileAndWait(file, 30000);
+
+    assert(receivedResponse, "Expected Kotlin LSP to respond");
+    assert(diagnostics.length > 0, `Expected errors, got ${diagnostics.length}`);
+  } finally {
+    await manager.shutdown();
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("kotlin: valid code has no errors", async () => {
+  if (!commandExists("kotlin-language-server")) {
+    skip("kotlin-language-server not installed");
+  }
+
+  const dir = await mkdtemp(join(tmpdir(), "lsp-kt-"));
+  const manager = new LSPManager(dir);
+
+  try {
+    await writeFile(join(dir, "settings.gradle.kts"), "rootProject.name = \"test\"\n");
+    await writeFile(join(dir, "build.gradle.kts"), "// empty\n");
+
+    await mkdir(join(dir, "src/main/kotlin"), { recursive: true });
+    const file = join(dir, "src/main/kotlin/Main.kt");
+
+    await writeFile(file, "fun main() { val x = 1; println(x) }\n");
+
+    const { diagnostics, receivedResponse } = await manager.touchFileAndWait(file, 30000);
+
+    assert(receivedResponse, "Expected Kotlin LSP to respond");
+    const errors = diagnostics.filter(d => d.severity === 1);
+    assert(errors.length === 0, `Expected no errors, got: ${errors.map(d => d.message).join(", ")}`);
+  } finally {
+    await manager.shutdown();
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+// ============================================================================
 // Python
 // ============================================================================
 
@@ -405,7 +466,7 @@ const result = greet("world");
     // Rename 'greet' at line 1, col 10
     const edit = await manager.rename(file, 1, 10, "sayHello");
 
-    assert(edit !== null, "Expected rename to return WorkspaceEdit");
+    if (!edit) throw new Error("Expected rename to return WorkspaceEdit");
     assert(
       edit.changes !== undefined || edit.documentChanges !== undefined,
       "Expected changes or documentChanges in WorkspaceEdit"
