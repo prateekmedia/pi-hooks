@@ -1,6 +1,6 @@
 {
   "name": "lsp",
-  "version": "0.45.3",
+  "version": "0.50.0",
   "description": "LSP extension for pi-coding-agent - provides language server tool and diagnostics feedback for Dart/Flutter, TypeScript, Vue, Svelte, Python, Go, Kotlin, Swift, Rust",
   "scripts": {
     "test": "npx tsx tests/lsp.test.ts",
@@ -31,9 +31,9 @@
     "extensions": ["./lsp.ts", "./lsp-tool.ts"]
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "^0.48.0",
-    "@mariozechner/pi-coding-agent": "^0.48.0",
-    "@mariozechner/pi-tui": "^0.48.0",
+    "@mariozechner/pi-ai": "^0.50.0",
+    "@mariozechner/pi-coding-agent": "^0.50.0",
+    "@mariozechner/pi-tui": "^0.50.0",
     "@sinclair/typebox": "^0.34.33",
     "vscode-languageserver-protocol": "^3.17.5"
   },

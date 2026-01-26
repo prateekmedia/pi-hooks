@@ -1,0 +1,20 @@
+{
+  "name": "pi-hooks",
+  "version": "0.50.0",
+  "description": "Collection of pi extensions (checkpoint, lsp, permission, ralph-loop)",
+  "private": true,
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent"
+  ],
+  "pi": {
+    "extensions": [
+      "./checkpoint",
+      "./lsp",
+      "./permission",
+      "./ralph-loop"
+    ]
+  }
+}

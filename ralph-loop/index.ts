@@ -557,7 +557,7 @@ async function runSingleAgent(
 				toolPath = path.join(os.homedir(), toolRef.slice(1));
 			}
 			if (fs.existsSync(toolPath)) {
-				args.push("--tool", toolPath);
+				args.push("--extension", toolPath);
 			}
 		}
 	}
