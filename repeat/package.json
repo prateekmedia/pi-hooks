@@ -1,0 +1,11 @@
+{
+  "name": "repeat",
+  "version": "0.50.0",
+  "description": "Repeat tool calls in pi-coding-agent",
+  "type": "module",
+  "keywords": ["pi", "pi-coding-agent", "repeat"],
+  "license": "MIT",
+  "pi": {
+    "extensions": ["./repeat.ts"]
+  }
+}

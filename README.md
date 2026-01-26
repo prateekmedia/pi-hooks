@@ -49,8 +49,6 @@ The package exports two extensions via `package.json`:
 - Definitions, references, hover, symbols, diagnostics, signatures
 - Query by symbol name or line/column position
 
-Both hook and tool are included in the package. Use `pi config` to enable or disable each entry.
-
 <img src="assets/lsp-screenshot.png" alt="LSP Extension" width="500">
 
 ### `permission/`
@@ -84,6 +82,15 @@ Looped subagent execution via the `ralph_loop` tool.
 - No npm install required
 
 Example prompt: "Use ralph loop to check the current time five times, sleeping 1s between iterations."
+
+### `repeat/`
+
+Repeat past tool calls (bash/edit/write) from the current branch.
+
+- `/repeat` shows a picker of recent bash/edit/write tool calls
+- Bash entries load as `!command` in the editor for tweak + run
+- Write entries open a temp editor (if `$EDITOR` is set) and apply only when you save
+- Edit entries can repeat the edit (may fail) or open `$EDITOR` at the first changed line; repeat uses a temp editor and applies on save
 
 ## Usage
 
