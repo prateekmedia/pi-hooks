@@ -6,7 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { DynamicBorder, createEditTool, createWriteTool } from "@mariozechner/pi-coding-agent";
-import { Container, SelectList, Spacer, Text, type SelectItem } from "@mariozechner/pi-tui";
+import { Container, SelectList, Spacer, Text, getEditorKeybindings, truncateToWidth, type SelectItem } from "@mariozechner/pi-tui";
 
 type RepeatToolName = "bash" | "edit" | "write";
 
@@ -229,11 +229,10 @@ function collectRepeatCalls(entries: any[]): RepeatToolCall[] {
 }
 
 function getRepeatLabel(entry: RepeatToolCall): { label: string; description?: string } {
-	const status = entry.resultIsError === undefined ? "…" : entry.resultIsError ? "✗" : "✓";
 	if (entry.toolName === "bash") {
 		const command = String(entry.args?.command ?? "");
 		return {
-			label: `${status} bash: ${truncatePreview(command || "(empty)", 60)}`,
+			label: `bash: ${truncatePreview(command || "(empty)", 60)}`,
 			description: entry.args?.timeout ? `timeout: ${entry.args.timeout}s` : undefined,
 		};
 	}
@@ -243,36 +242,70 @@ function getRepeatLabel(entry: RepeatToolCall): { label: string; description?: s
 		const line = details?.firstChangedLine ? `line ${details.firstChangedLine}` : "line ?";
 		const preview = truncatePreview(String(entry.args?.oldText ?? ""), 40);
 		return {
-			label: `${status} edit: ${targetPath || "(unknown)"}`,
+			label: `edit: ${targetPath || "(unknown)"}`,
 			description: preview ? `${line} • ${preview}` : line,
 		};
 	}
 	const targetPath = String(entry.args?.path ?? "");
 	const bytes = typeof entry.args?.content === "string" ? entry.args.content.length : 0;
 	return {
-		label: `${status} write: ${targetPath || "(unknown)"}`,
+		label: `write: ${targetPath || "(unknown)"}`,
 		description: `${bytes} bytes`,
 	};
 }
 
 async function showRepeatPicker(ctx: any, items: SelectItem[]): Promise<string | null> {
 	return ctx.ui.custom((tui, theme, _kb, done) => {
+		let searchQuery = "";
+
+		const buildSelectList = (listItems: SelectItem[]) => {
+			const selectList = new SelectList(listItems, Math.min(Math.max(listItems.length, 1), 12), {
+				selectedPrefix: (text) => theme.fg("accent", text),
+				selectedText: (text) => theme.fg("accent", text),
+				description: (text) => theme.fg("muted", text),
+				scrollInfo: (text) => theme.fg("dim", text),
+				noMatch: (text) => theme.fg("warning", text),
+			});
+			selectList.onSelect = (item) => done(item.value);
+			selectList.onCancel = () => done(null);
+			return selectList;
+		};
+
+		let selectList = buildSelectList(items);
+
+		const applyFilter = () => {
+			const tokens = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
+			const filtered = tokens.length === 0
+				? items
+				: items.filter((item) => {
+					const haystack = `${item.label ?? ""} ${item.description ?? ""}`.toLowerCase();
+					return tokens.every((token) => haystack.includes(token));
+				});
+			selectList = buildSelectList(filtered);
+		};
+
+		const searchLine = {
+			render: (width: number) => {
+				const prompt = theme.fg("muted", "Type to search:");
+				const queryText = searchQuery ? ` ${theme.fg("accent", searchQuery)}` : "";
+				return [truncateToWidth(`  ${prompt}${queryText}`, width)];
+			},
+			invalidate: () => {},
+		};
+
+		const selectListWrapper = {
+			render: (width: number) => selectList.render(width),
+			invalidate: () => selectList.invalidate(),
+		};
+
 		const container = new Container();
 		container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
 		container.addChild(new Spacer(1));
 		container.addChild(new Text(theme.fg("accent", theme.bold("Repeat tool call")), 1, 0));
 		container.addChild(new Spacer(1));
-
-		const selectList = new SelectList(items, Math.min(items.length, 12), {
-			selectedPrefix: (text) => theme.fg("accent", text),
-			selectedText: (text) => theme.fg("accent", text),
-			description: (text) => theme.fg("muted", text),
-			scrollInfo: (text) => theme.fg("dim", text),
-			noMatch: (text) => theme.fg("warning", text),
-		});
-		selectList.onSelect = (item) => done(item.value);
-		selectList.onCancel = () => done(null);
-		container.addChild(selectList);
+		container.addChild(searchLine);
+		container.addChild(new Spacer(1));
+		container.addChild(selectListWrapper);
 
 		container.addChild(new Spacer(1));
 		container.addChild(new Text(theme.fg("dim", "↑↓ navigate • enter select • esc cancel"), 1, 0));
@@ -283,6 +316,38 @@ async function showRepeatPicker(ctx: any, items: SelectItem[]): Promise<string |
 			render: (width) => container.render(width),
 			invalidate: () => container.invalidate(),
 			handleInput: (data) => {
+				const kb = getEditorKeybindings();
+				if (kb.matches(data, "selectCancel")) {
+					if (searchQuery) {
+						searchQuery = "";
+						applyFilter();
+						tui.requestRender();
+						return;
+					}
+					selectList.handleInput(data);
+					tui.requestRender();
+					return;
+				}
+				if (kb.matches(data, "deleteCharBackward")) {
+					if (searchQuery.length > 0) {
+						searchQuery = searchQuery.slice(0, -1);
+						applyFilter();
+						tui.requestRender();
+						return;
+					}
+				}
+
+				const hasControlChars = [...data].some((ch) => {
+					const code = ch.charCodeAt(0);
+					return code < 32 || code === 0x7f || (code >= 0x80 && code <= 0x9f);
+				});
+				if (!hasControlChars && data.length > 0) {
+					searchQuery += data;
+					applyFilter();
+					tui.requestRender();
+					return;
+				}
+
 				selectList.handleInput(data);
 				tui.requestRender();
 			},

@@ -87,7 +87,7 @@ Example prompt: "Use ralph loop to check the current time five times, sleeping 1
 
 Repeat past tool calls (bash/edit/write) from the current branch.
 
-- `/repeat` shows a picker of recent bash/edit/write tool calls
+- `/repeat` shows a picker of recent bash/edit/write tool calls with type-to-search filtering
 - Bash entries load as `!command` in the editor for tweak + run
 - Write entries open a temp editor (if `$EDITOR` is set) and apply only when you save
 - Edit entries can repeat the edit (may fail) or open `$EDITOR` at the first changed line; repeat uses a temp editor and applies on save

@@ -29,6 +29,8 @@ declare module "@mariozechner/pi-tui" {
 	export const SelectList: any;
 	export const Spacer: any;
 	export const Text: any;
+	export const getEditorKeybindings: any;
+	export const truncateToWidth: any;
 	export type SelectItem = any;
 }
 
