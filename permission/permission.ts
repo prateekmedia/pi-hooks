@@ -41,6 +41,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { numberedSelect } from "../ui.js";
 import {
   type PermissionLevel,
   type PermissionMode,
@@ -286,7 +287,7 @@ export async function handlePermissionCommand(
     const newLevel = arg as PermissionLevel;
 
     if (hasInteractiveUI(ctx)) {
-      const scope = await ctx.ui.select("Save permission level to:", [
+      const scope = await numberedSelect(ctx, "Save permission level to:", [
         "Session only",
         "Global (persists)",
       ]);
@@ -318,14 +319,14 @@ export async function handlePermissionCommand(
     return `${info.label}: ${info.desc}${marker}`;
   });
 
-  const choice = await ctx.ui.select("Select permission level", options);
+  const choice = await numberedSelect(ctx, "Select permission level", options);
   if (!choice) return;
 
   const selectedLabel = choice.split(":")[0].trim();
   const newLevel = LEVELS.find((l) => LEVEL_INFO[l].label === selectedLabel);
   if (!newLevel || newLevel === state.currentLevel) return;
 
-  const scope = await ctx.ui.select("Save to:", ["Session only", "Global (persists)"]);
+  const scope = await numberedSelect(ctx, "Save to:", ["Session only", "Global (persists)"]);
   if (!scope) return;
 
   setLevel(state, newLevel, scope === "Global (persists)", ctx);
@@ -345,7 +346,7 @@ export async function handlePermissionModeCommand(
     const newMode = arg as PermissionMode;
 
     if (hasInteractiveUI(ctx)) {
-      const scope = await ctx.ui.select("Save permission mode to:", [
+      const scope = await numberedSelect(ctx, "Save permission mode to:", [
         "Session only",
         "Global (persists)",
       ]);
@@ -375,14 +376,14 @@ export async function handlePermissionModeCommand(
     return `${info.label}: ${info.desc}${marker}`;
   });
 
-  const choice = await ctx.ui.select("Select permission mode", options);
+  const choice = await numberedSelect(ctx, "Select permission mode", options);
   if (!choice) return;
 
   const selectedLabel = choice.split(":")[0].trim();
   const newMode = PERMISSION_MODES.find((m) => PERMISSION_MODE_INFO[m].label === selectedLabel);
   if (!newMode || newMode === state.permissionMode) return;
 
-  const scope = await ctx.ui.select("Save to:", ["Session only", "Global (persists)"]);
+  const scope = await numberedSelect(ctx, "Save to:", ["Session only", "Global (persists)"]);
   if (!scope) return;
 
   setMode(state, newMode, scope === "Global (persists)", ctx);
@@ -454,7 +455,7 @@ Use /permission-mode ask to enable confirmations.`
     }
 
     playPermissionSound();
-    const choice = await ctx.ui.select(
+    const choice = await numberedSelect(ctx,
       `⚠️ Dangerous command`,
       ["Allow once", "Cancel"]
     );
@@ -495,7 +496,7 @@ Use /permission ${requiredLevel} or /permission-mode ask to enable prompts.`
 
   // Interactive mode: prompt
   playPermissionSound();
-  const choice = await ctx.ui.select(
+  const choice = await numberedSelect(ctx,
     `Requires ${requiredInfo.label}`,
     ["Allow once", `Allow all (${requiredInfo.label})`, "Cancel"]
   );
@@ -553,7 +554,7 @@ Use /permission low or /permission-mode ask to enable prompts.`
 
   // Interactive mode: prompt
   playPermissionSound();
-  const choice = await ctx.ui.select(
+  const choice = await numberedSelect(ctx,
     message,
     ["Allow once", "Allow all (Low)", "Cancel"]
   );

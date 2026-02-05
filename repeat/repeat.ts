@@ -1,6 +1,7 @@
 /// <reference path="./types.d.ts" />
 
 import { spawnSync } from "node:child_process";
+import { numberedSelect } from "../ui.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -410,7 +411,7 @@ export default function (pi: ExtensionAPI) {
 
 				let mode: "repeat" | "edit" = "repeat";
 				if (externalEditor) {
-					const choice = await ctx.ui.select("Repeat write:", [
+					const choice = await numberedSelect(ctx, "Repeat write:", [
 						"Re-write same content",
 						"Open in $EDITOR",
 					]);
@@ -475,7 +476,7 @@ export default function (pi: ExtensionAPI) {
 
 				let mode: "repeat" | "open" = "repeat";
 				if (externalEditor) {
-					const choice = await ctx.ui.select("Repeat edit:", [
+					const choice = await numberedSelect(ctx, "Repeat edit:", [
 						"Repeat the Edit",
 						"Open file at changed line",
 					]);
