@@ -58,6 +58,7 @@ export const LANGUAGE_IDS: Record<string, string> = {
   ".py": "python", ".pyi": "python", ".go": "go", ".rs": "rust",
   ".kt": "kotlin", ".kts": "kotlin",
   ".swift": "swift",
+  ".rb": "ruby", ".rake": "ruby", ".gemspec": "ruby", ".ru": "ruby",
 };
 
 // Types
@@ -351,6 +352,22 @@ async function spawnSourcekitLsp(root: string): Promise<ChildProcessWithoutNullS
   return spawnWithFallback(xcrun, [["sourcekit-lsp"], ["sourcekit-lsp", "--stdio"]], root);
 }
 
+// Ruby server resolution
+function resolveRubyServer(): string {
+  try {
+    const settingsPath = path.join(os.homedir(), ".pi", "agent", "settings.json");
+    if (fs.existsSync(settingsPath)) {
+      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+      const rubyServer = settings?.lsp?.rubyServer;
+      if (typeof rubyServer === "string" && rubyServer) return rubyServer;
+    }
+  } catch {
+    // ignore
+  }
+
+  return "ruby-lsp";
+}
+
 // Server Configs
 export const LSP_SERVERS: LSPServerConfig[] = [
   {
@@ -414,6 +431,17 @@ export const LSP_SERVERS: LSPServerConfig[] = [
     },
   },
   { id: "rust-analyzer", extensions: [".rs"], findRoot: (f, cwd) => findRoot(f, cwd, ["Cargo.toml"]), spawn: simpleSpawn("rust-analyzer", []) },
+  {
+    id: "ruby",
+    extensions: [".rb", ".rake", ".gemspec", ".ru"],
+    findRoot: (f, cwd) => findRoot(f, cwd, ["Gemfile", ".ruby-version"]),
+    spawn: async (root) => {
+      const isRubocop = resolveRubyServer() === "rubocop";
+      const bin = which(isRubocop ? "rubocop" : "ruby-lsp");
+      if (!bin) return undefined;
+      return { process: spawn(bin, isRubocop ? ["--lsp"] : [], { cwd: root, stdio: ["pipe", "pipe", "pipe"] }) };
+    },
+  },
 ];
 
 // Singleton Manager
@@ -497,7 +525,7 @@ export class LSPManager {
       const reader = new StreamMessageReader(handle.process.stdout!);
       const writer = new StreamMessageWriter(handle.process.stdin!);
       const conn = createMessageConnection(reader, writer);
-      
+
       // Prevent crashes from stream errors
       handle.process.stdin?.on("error", () => {});
       handle.process.stdout?.on("error", () => {});
@@ -1022,11 +1050,11 @@ export class LSPManager {
     const l = await this.loadFile(fp);
     if (!l) return [];
     await this.openOrUpdate(l.clients, l.absPath, l.uri, l.langId, l.content);
-    
+
     const start = this.toPos(startLine, startCol);
     const end = this.toPos(endLine ?? startLine, endCol ?? startCol);
     const range = { start, end };
-    
+
     // Get diagnostics for this range to include in context
     const diagnostics: Diagnostic[] = [];
     for (const c of l.clients) {
@@ -1035,7 +1063,7 @@ export class LSPManager {
         if (this.rangesOverlap(d.range, range)) diagnostics.push(d);
       }
     }
-    
+
     const results = await Promise.all(l.clients.map(async c => {
       if (c.closed) return [];
       try {
@@ -1050,7 +1078,7 @@ export class LSPManager {
     return results.flat();
   }
 
-  private rangesOverlap(a: { start: { line: number; character: number }; end: { line: number; character: number } }, 
+  private rangesOverlap(a: { start: { line: number; character: number }; end: { line: number; character: number } },
                         b: { start: { line: number; character: number }; end: { line: number; character: number } }): boolean {
     if (a.end.line < b.start.line || b.end.line < a.start.line) return false;
     if (a.end.line === b.start.line && a.end.character < b.start.character) return false;

@@ -8,7 +8,7 @@ Language Server Protocol integration for pi-coding-agent.
 - **Tool** (`lsp-tool.ts`): On-demand LSP queries (definitions, references, hover, symbols, diagnostics, signatures)
 - Manages one LSP server per project root and reuses them across turns
 - **Efficient**: Bounded memory usage via LRU cache and idle file cleanup
-- Supports TypeScript/JavaScript, Vue, Svelte, Dart/Flutter, Python, Go, Kotlin, Swift, and Rust
+- Supports TypeScript/JavaScript, Vue, Svelte, Dart/Flutter, Python, Go, Kotlin, Swift, Rust, and Ruby
 
 ## Supported Languages
 
@@ -23,6 +23,7 @@ Language Server Protocol integration for pi-coding-agent.
 | Kotlin | `kotlin-ls` | `settings.gradle(.kts)`, `build.gradle(.kts)`, `pom.xml` |
 | Swift | `sourcekit-lsp` | `Package.swift`, Xcode (`*.xcodeproj` / `*.xcworkspace`) |
 | Rust | `rust-analyzer` | `Cargo.toml` |
+| Ruby | `ruby-lsp` ([configurable](#ruby-server)) | `Gemfile`, `.ruby-version` |
 
 ### Known Limitations
 
@@ -69,6 +70,10 @@ xcrun sourcekit-lsp --help
 
 # Rust (install via rustup)
 rustup component add rust-analyzer
+
+# Ruby
+gem install ruby-lsp  # optional if using rubocop only, see Ruby Server Selection
+gem install rubocop
 ```
 
 The extension spawns binaries from your PATH.
@@ -147,6 +152,12 @@ To disable auto diagnostics, choose "Disabled" in `/lsp` or set in `~/.pi/agent/
 Other values: `"agent_end"` (default) and `"edit_write"`.
 
 Agent-end mode analyzes files touched during the full agent response (after all tool calls complete) and posts a diagnostics message only once. Disabling the hook does not disable the `/lsp` tool.
+
+### Ruby Server
+
+Optionally set `lsp.rubyServer` in `~/.pi/agent/settings.json`:
+- `"ruby-lsp"` (default) — full IDE features, integrates RuboCop when installed
+- `"rubocop"` — diagnostics and formatting only, [faster startup](https://github.com/sst/opencode/releases/tag/v1.0.81)
 
 ## File Structure
 
