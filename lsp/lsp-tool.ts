@@ -42,7 +42,7 @@ function diagnosticsWaitMsForFile(filePath: string): number {
   return DIAGNOSTICS_WAIT_MS_DEFAULT;
 }
 
-const ACTIONS = ["definition", "references", "hover", "symbols", "diagnostics", "workspace-diagnostics", "signature", "rename", "codeAction"] as const;
+const ACTIONS = ["definition", "references", "hover", "symbols", "diagnostics", "workspace-diagnostics", "signature", "rename", "codeAction", "workspace-symbols", "workspace-references"] as const;
 const SEVERITY_FILTERS = ["all", "error", "warning", "info", "hint"] as const;
 
 const LspParams = Type.Object({
@@ -147,6 +147,18 @@ function formatLocation(loc: { uri: string; range?: { start?: { line: number; ch
   return typeof line === "number" && typeof col === "number" ? `${display}:${line + 1}:${col + 1}` : display;
 }
 
+function symbolKindName(kind: number): string {
+  const names: Record<number, string> = {
+    1: "File", 2: "Module", 3: "Namespace", 4: "Package", 5: "Class",
+    6: "Method", 7: "Property", 8: "Field", 9: "Constructor", 10: "Enum",
+    11: "Interface", 12: "Function", 13: "Variable", 14: "Constant",
+    15: "String", 16: "Number", 17: "Boolean", 18: "Array", 19: "Object",
+    20: "Key", 21: "Null", 22: "EnumMember", 23: "Struct", 24: "Event",
+    25: "Operator", 26: "TypeParameter",
+  };
+  return names[kind] || "Symbol";
+}
+
 function formatHover(contents: unknown): string {
   if (typeof contents === "string") return contents;
   if (Array.isArray(contents)) return contents.map(c => typeof c === "string" ? c : (c as any)?.value ?? "").filter(Boolean).join("\n\n");
@@ -215,6 +227,7 @@ export default function (pi: ExtensionAPI) {
     description: `Query language server for definitions, references, types, symbols, diagnostics, rename, and code actions.
 
 Actions: definition, references, hover, signature, rename (require file + line/column or query), symbols (file, optional query), diagnostics (file), workspace-diagnostics (files array), codeAction (file + position).
+workspace-symbols (query, optional file to scope language), workspace-references (query, optional file to scope language).
 Use bash to find files: find src -name "*.ts" -type f`,
     parameters: LspParams,
 
@@ -315,6 +328,32 @@ Use bash to find files: find src -name "*.ts" -type f`,
             const result = await abortable(manager.getCodeActions(file!, rLine!, rCol!, endLine, endColumn), signal);
             const actions = formatCodeActions(result);
             return { content: [{ type: "text", text: `action: codeAction\n${qLine}${posLine}${actions.length ? actions.join("\n") : "No code actions available."}` }], details: result };
+          }
+          case "workspace-symbols": {
+            if (!query) throw new Error('Action "workspace-symbols" requires a "query" parameter.');
+            const results = await abortable(manager.getWorkspaceSymbols(query, file || undefined), signal);
+            const lines = results.map(s => {
+              const loc = formatLocation(s.location, ctx?.cwd);
+              const kind = symbolKindName(s.kind);
+              return `${loc} ${s.name} (${kind})`;
+            });
+            return { content: [{ type: "text", text: `action: workspace-symbols\n${qLine}${lines.length ? lines.join("\n") : "No symbols found."}` }], details: results };
+          }
+          case "workspace-references": {
+            if (!query) throw new Error('Action "workspace-references" requires a "query" parameter.');
+            const results = await abortable(manager.getWorkspaceReferences(query, file || undefined), signal);
+            const lines: string[] = [];
+            const allRefs: any[] = [];
+            for (const { symbol, references } of results) {
+              const symLoc = formatLocation(symbol.location, ctx?.cwd);
+              const kind = symbolKindName(symbol.kind);
+              lines.push(`${symbol.name} (${kind}) defined at ${symLoc}:`);
+              for (const ref of references) {
+                lines.push(`  ${formatLocation(ref, ctx?.cwd)}`);
+                allRefs.push(ref);
+              }
+            }
+            return { content: [{ type: "text", text: `action: workspace-references\n${qLine}${lines.length ? lines.join("\n") : "No references found."}` }], details: allRefs };
           }
         }
       } catch (e) {
