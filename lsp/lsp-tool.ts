@@ -16,6 +16,7 @@
  *   - Kotlin (kotlin-ls)
  *   - Swift (sourcekit-lsp)
  *   - Rust (rust-analyzer)
+ *   - Ruby (ruby-lsp or rubocop)
  *
  * Usage:
  *   pi --extension ./lsp-tool.ts
@@ -169,7 +170,7 @@ function formatSignature(help: any): string {
 
 function formatWorkspaceEdit(edit: any, cwd?: string): string {
   const lines: string[] = [];
-  
+
   if (edit.documentChanges?.length) {
     for (const change of edit.documentChanges) {
       if (change.textDocument?.uri) {
@@ -183,7 +184,7 @@ function formatWorkspaceEdit(edit: any, cwd?: string): string {
       }
     }
   }
-  
+
   if (edit.changes) {
     for (const [uri, edits] of Object.entries(edit.changes)) {
       const fp = uriToPath(uri);
@@ -195,7 +196,7 @@ function formatWorkspaceEdit(edit: any, cwd?: string): string {
       }
     }
   }
-  
+
   return lines.length ? lines.join("\n") : "No edits.";
 }
 

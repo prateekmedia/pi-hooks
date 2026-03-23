@@ -436,6 +436,71 @@ result = greet(x)
 });
 
 // ============================================================================
+// Ruby
+// ============================================================================
+
+test("ruby: detects syntax errors", async () => {
+  if (!commandExists("ruby-lsp")) {
+    skip("ruby-lsp not installed");
+  }
+
+  const dir = await mkdtemp(join(tmpdir(), "lsp-ruby-"));
+  const manager = new LSPManager(dir);
+
+  try {
+    // Gemfile.lock is required for ruby-lsp to start
+    await writeFile(join(dir, "Gemfile"), 'source "https://rubygems.org"');
+    await writeFile(join(dir, "Gemfile.lock"), "GEM\n  remote: https://rubygems.org/\n  specs:\n\nPLATFORMS\n  ruby\n\nDEPENDENCIES\n\nBUNDLED WITH\n   2.5.0\n");
+
+    const file = join(dir, "main.rb");
+    // Syntax error: missing closing parenthesis
+    await writeFile(file, `
+def greet(name
+  puts "Hello, #{name}"
+end
+`);
+
+    const { diagnostics } = await manager.touchFileAndWait(file, 20000);
+
+    assert(diagnostics.length > 0, `Expected errors, got ${diagnostics.length}`);
+  } finally {
+    await manager.shutdown();
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("ruby: valid code has no errors", async () => {
+  if (!commandExists("ruby-lsp")) {
+    skip("ruby-lsp not installed");
+  }
+
+  const dir = await mkdtemp(join(tmpdir(), "lsp-ruby-"));
+  const manager = new LSPManager(dir);
+
+  try {
+    await writeFile(join(dir, "Gemfile"), 'source "https://rubygems.org"');
+    await writeFile(join(dir, "Gemfile.lock"), "GEM\n  remote: https://rubygems.org/\n  specs:\n\nPLATFORMS\n  ruby\n\nDEPENDENCIES\n\nBUNDLED WITH\n   2.5.0\n");
+
+    const file = join(dir, "main.rb");
+    await writeFile(file, `
+def greet(name)
+  puts "Hello, #{name}"
+end
+
+greet("world")
+`);
+
+    const { diagnostics } = await manager.touchFileAndWait(file, 20000);
+    const errors = diagnostics.filter(d => d.severity === 1);
+
+    assert(errors.length === 0, `Expected no errors, got: ${errors.map(d => d.message).join(", ")}`);
+  } finally {
+    await manager.shutdown();
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+// ============================================================================
 // Rename (TypeScript)
 // ============================================================================
 

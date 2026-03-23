@@ -534,6 +534,44 @@ test("svelte: finds root with svelte.config.js", async () => {
 });
 
 // ============================================================================
+// Ruby root detection tests
+// ============================================================================
+
+test("ruby: finds root with Gemfile", async () => {
+  await withTempDir({
+    "Gemfile": 'source "https://rubygems.org"',
+    "app/models/user.rb": "class User; end",
+  }, async (dir) => {
+    const server = LSP_SERVERS.find(s => s.id === "ruby")!;
+    const root = server.findRoot(join(dir, "app/models/user.rb"), dir);
+    assertEquals(root, dir, "Should find root at Gemfile location");
+  });
+});
+
+test("ruby: finds root with .ruby-version", async () => {
+  await withTempDir({
+    ".ruby-version": "3.3.0",
+    "lib/my_gem.rb": "module MyGem; end",
+  }, async (dir) => {
+    const server = LSP_SERVERS.find(s => s.id === "ruby")!;
+    const root = server.findRoot(join(dir, "lib/my_gem.rb"), dir);
+    assertEquals(root, dir, "Should find root at .ruby-version location");
+  });
+});
+
+test("ruby: nested gem in monorepo finds nearest root", async () => {
+  await withTempDir({
+    "Gemfile": 'source "https://rubygems.org"',
+    "gems/auth/Gemfile": 'source "https://rubygems.org"',
+    "gems/auth/lib/auth.rb": "module Auth; end",
+  }, async (dir) => {
+    const server = LSP_SERVERS.find(s => s.id === "ruby")!;
+    const root = server.findRoot(join(dir, "gems/auth/lib/auth.rb"), dir);
+    assertEquals(root, join(dir, "gems/auth"), "Should find nearest Gemfile");
+  });
+});
+
+// ============================================================================
 // Additional Rust tests (parity with TypeScript)
 // ============================================================================
 
@@ -793,6 +831,53 @@ test("svelte: returns undefined when no config", async () => {
     const server = LSP_SERVERS.find(s => s.id === "svelte")!;
     const root = server.findRoot(join(dir, "App.svelte"), dir);
     assertEquals(root, undefined, "Should return undefined when no package.json or svelte.config.js");
+  });
+});
+
+// ============================================================================
+// Additional Ruby tests (parity with TypeScript)
+// ============================================================================
+
+test("LANGUAGE_IDS: Ruby extensions", async () => {
+  assertEquals(LANGUAGE_IDS[".rb"], "ruby", ".rb should map to ruby");
+  assertEquals(LANGUAGE_IDS[".rake"], "ruby", ".rake should map to ruby");
+  assertEquals(LANGUAGE_IDS[".gemspec"], "ruby", ".gemspec should map to ruby");
+  assertEquals(LANGUAGE_IDS[".ru"], "ruby", ".ru should map to ruby");
+});
+
+test("LSP_SERVERS: has Ruby server", async () => {
+  const server = LSP_SERVERS.find(s => s.id === "ruby");
+  assert(server !== undefined, "Should have ruby server");
+  assertIncludes(server!.extensions, ".rb", "Should handle .rb");
+  assertIncludes(server!.extensions, ".rake", "Should handle .rake");
+  assertIncludes(server!.extensions, ".gemspec", "Should handle .gemspec");
+  assertIncludes(server!.extensions, ".ru", "Should handle .ru");
+});
+
+test("ruby: returns undefined when no marker files", async () => {
+  await withTempDir({
+    "script.rb": "puts 'hello'",
+  }, async (dir) => {
+    const server = LSP_SERVERS.find(s => s.id === "ruby")!;
+    const root = server.findRoot(join(dir, "script.rb"), dir);
+    assertEquals(root, undefined, "Should return undefined when no Gemfile or .ruby-version");
+  });
+});
+
+test("ruby: Rails project finds root", async () => {
+  await withTempDir({
+    "Gemfile": 'gem "rails"',
+    "app/models/user.rb": "class User < ApplicationRecord; end",
+    "app/controllers/users_controller.rb": "class UsersController < ApplicationController; end",
+    "config/routes.rb": "Rails.application.routes.draw {}",
+  }, async (dir) => {
+    const server = LSP_SERVERS.find(s => s.id === "ruby")!;
+    const modelRoot = server.findRoot(join(dir, "app/models/user.rb"), dir);
+    const controllerRoot = server.findRoot(join(dir, "app/controllers/users_controller.rb"), dir);
+    const configRoot = server.findRoot(join(dir, "config/routes.rb"), dir);
+    assertEquals(modelRoot, dir, "Model should find root");
+    assertEquals(controllerRoot, dir, "Controller should find root");
+    assertEquals(configRoot, dir, "Config should find root");
   });
 });
 
