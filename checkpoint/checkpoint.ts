@@ -16,6 +16,7 @@
  */
 
 import { spawn } from "child_process";
+import { numberedSelect } from "../ui.js";
 import {
   isGitRepo,
   getRepoRoot,
@@ -388,7 +389,7 @@ async function handleRestorePrompt(
     ? new Date(targetEntry.timestamp).getTime()
     : Date.now();
 
-  const choice = await ctx.ui.select(
+  const choice = await numberedSelect(ctx,
     "Restore code state?",
     restoreOptions.map((o) => o.label)
   );

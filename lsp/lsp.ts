@@ -16,6 +16,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import { type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
+import { numberedSelect } from "../ui.js";
 import { type Diagnostic } from "vscode-languageserver-protocol";
 import { LSP_SERVERS, formatDiagnostic, getOrCreateManager, shutdownManager } from "./lsp-core.js";
 
@@ -378,7 +379,7 @@ export default function (pi: ExtensionAPI) {
         label: mode === hookMode ? `${labelForMode(mode)}${currentMark}` : labelForMode(mode),
       }));
 
-      const modeChoice = await ctx.ui.select(
+      const modeChoice = await numberedSelect(ctx,
         "LSP auto diagnostics hook mode:",
         modeOptions.map((option) => option.label),
       );
@@ -398,7 +399,7 @@ export default function (pi: ExtensionAPI) {
         },
       ];
 
-      const scopeChoice = await ctx.ui.select(
+      const scopeChoice = await numberedSelect(ctx,
         "Apply LSP auto diagnostics hook setting to:",
         scopeOptions.map((option) => option.label),
       );
