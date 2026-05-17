@@ -100,6 +100,8 @@ The `lsp` tool provides these actions:
 | `signature` | Get function signature | `file` + (`line`/`column` or `query`) |
 | `rename` | Rename symbol across files | `file` + (`line`/`column` or `query`) + `newName` |
 | `codeAction` | Get available quick fixes/refactors | `file` + `line`/`column`, optional `endLine`/`endColumn` |
+| `workspace-symbols` | Search for symbols across the workspace by name | `query`, optional `file` to scope by language |
+| `workspace-references` | Find all references to a symbol across the workspace by name | `query`, optional `file` to scope by language |
 
 **Query resolution**: For position-based actions, you can provide a `query` (symbol name) instead of `line`/`column`. The tool will find the symbol in the file and use its position.
 
@@ -129,6 +131,8 @@ Example questions the LLM can answer using this tool:
 - "Get only errors from `index.ts`"
 - "Rename `oldFunction` to `newFunction`"
 - "What quick fixes are available at line 10?"
+- "Find all symbols named `Manager` across the workspace"
+- "Where is `formatDiagnostic` used across the entire project?"
 
 ## Settings
 

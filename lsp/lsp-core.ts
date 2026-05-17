@@ -27,6 +27,7 @@ import {
   DocumentSymbolRequest,
   RenameRequest,
   CodeActionRequest,
+  WorkspaceSymbolRequest,
 } from "vscode-languageserver-protocol/node.js";
 import {
   type Diagnostic,
@@ -39,6 +40,7 @@ import {
   type WorkspaceEdit,
   type CodeAction,
   type Command,
+  type WorkspaceSymbol,
   DiagnosticSeverity,
   CodeActionKind,
   DocumentDiagnosticReportKind,
@@ -997,6 +999,67 @@ export class LSPManager {
       catch { return []; }
     }));
     return results.flat();
+  }
+
+  async getWorkspaceSymbols(query: string, filePath?: string): Promise<SymbolInformation[]> {
+    // If filePath given, scope to clients for that file's language
+    // Otherwise query ALL active clients
+    let clients: LSPClient[];
+    if (filePath) {
+      const absPath = this.resolve(filePath);
+      clients = await this.getClientsForFile(absPath);
+    } else {
+      clients = Array.from(this.clients.values());
+    }
+    if (!clients.length) return [];
+
+    const results = await Promise.all(clients.map(async c => {
+      if (c.closed) return [];
+      // Check if server supports workspace symbols
+      if (!c.capabilities?.workspaceSymbolProvider) return [];
+      try {
+        const result = await c.connection.sendRequest(WorkspaceSymbolRequest.type, { query });
+        if (!result) return [];
+        // Normalize: result can be SymbolInformation[] or WorkspaceSymbol[]
+        return (result as SymbolInformation[]);
+      } catch { return []; }
+    }));
+    return results.flat();
+  }
+
+  async getWorkspaceReferences(query: string, filePath?: string): Promise<{ symbol: SymbolInformation; references: Location[] }[]> {
+    const symbols = await this.getWorkspaceSymbols(query, filePath);
+    if (!symbols.length) return [];
+
+    // Limit to first 10 matches to avoid performance issues
+    const MAX_SYMBOL_LOOKUPS = 10;
+    const toQuery = symbols.slice(0, MAX_SYMBOL_LOOKUPS);
+
+    // Deduplicate symbols by location (same uri + line)
+    const seen = new Set<string>();
+    const unique: SymbolInformation[] = [];
+    for (const sym of toQuery) {
+      const key = `${sym.location.uri}:${sym.location.range.start.line}:${sym.location.range.start.character}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(sym);
+    }
+
+    const results: { symbol: SymbolInformation; references: Location[] }[] = [];
+
+    for (const sym of unique) {
+      const fp = uriToPath(sym.location.uri);
+      const line = sym.location.range.start.line + 1; // convert to 1-indexed
+      const col = sym.location.range.start.character + 1;
+      try {
+        const refs = await this.getReferences(fp, line, col);
+        results.push({ symbol: sym, references: refs });
+      } catch {
+        // Skip symbols we can't get references for
+      }
+    }
+
+    return results;
   }
 
   async rename(fp: string, line: number, col: number, newName: string): Promise<WorkspaceEdit | null> {
