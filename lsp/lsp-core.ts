@@ -27,7 +27,7 @@ import {
   DocumentSymbolRequest,
   RenameRequest,
   CodeActionRequest,
-} from "vscode-languageserver-protocol/node.js";
+} from "vscode-languageserver-protocol/node";
 import {
   type Diagnostic,
   type Location,
