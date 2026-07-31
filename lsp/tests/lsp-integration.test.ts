@@ -311,6 +311,49 @@ func main() {
 });
 
 // ============================================================================
+// C/C++ (clangd)
+// ============================================================================
+
+test("clangd: detects C++ type errors", async () => {
+  if (!commandExists("clangd")) skip("clangd not installed");
+
+  const dir = await mkdtemp(join(tmpdir(), "lsp-clangd-"));
+  const manager = new LSPManager(dir);
+  try {
+    await writeFile(join(dir, "CMakeLists.txt"), "cmake_minimum_required(VERSION 3.20)\nproject(test LANGUAGES CXX)\n");
+    const file = join(dir, "main.cpp");
+    await writeFile(file, 'int main() { const char* value = 42; return value[0]; }\n');
+
+    const { diagnostics, receivedResponse } = await manager.touchFileAndWait(file, 10000);
+    assert(receivedResponse, "Expected clangd to respond");
+    assert(diagnostics.some((diagnostic) => diagnostic.severity === 1), `Expected a clangd error, got: ${diagnostics.map((diagnostic) => diagnostic.message).join(", ")}`);
+  } finally {
+    await manager.shutdown();
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("clangd: valid C++ has no errors", async () => {
+  if (!commandExists("clangd")) skip("clangd not installed");
+
+  const dir = await mkdtemp(join(tmpdir(), "lsp-clangd-"));
+  const manager = new LSPManager(dir);
+  try {
+    await writeFile(join(dir, "CMakeLists.txt"), "cmake_minimum_required(VERSION 3.20)\nproject(test LANGUAGES CXX)\n");
+    const file = join(dir, "main.cpp");
+    await writeFile(file, "int main() { int value = 42; return value == 42 ? 0 : 1; }\n");
+
+    const { diagnostics, receivedResponse } = await manager.touchFileAndWait(file, 10000);
+    assert(receivedResponse, "Expected clangd to respond");
+    const errors = diagnostics.filter((diagnostic) => diagnostic.severity === 1);
+    assert(errors.length === 0, `Expected no errors, got: ${errors.map((diagnostic) => diagnostic.message).join(", ")}`);
+  } finally {
+    await manager.shutdown();
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+// ============================================================================
 // Kotlin
 // ============================================================================
 

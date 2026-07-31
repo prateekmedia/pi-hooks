@@ -13,9 +13,10 @@
  *   - Svelte (svelteserver)
  *   - Python (pyright-langserver)
  *   - Go (gopls)
- *   - Kotlin (kotlin-ls)
+ *   - Kotlin (kotlin-lsp, with kotlin-language-server fallback)
  *   - Swift (sourcekit-lsp)
  *   - Rust (rust-analyzer)
+ *   - C/C++ (clangd)
  *
  * Usage:
  *   pi --extension ./lsp-tool.ts
@@ -30,16 +31,6 @@ import { Text } from "@earendil-works/pi-tui";
 import { getOrCreateManager, formatDiagnostic, filterDiagnosticsBySeverity, uriToPath, resolvePosition, collectSymbols, type SeverityFilter } from "./lsp-core.js";
 
 const PREVIEW_LINES = 10;
-
-const DIAGNOSTICS_WAIT_MS_DEFAULT = 3000;
-
-function diagnosticsWaitMsForFile(filePath: string): number {
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext === ".kt" || ext === ".kts") return 30000;
-  if (ext === ".swift") return 20000;
-  if (ext === ".rs") return 20000;
-  return DIAGNOSTICS_WAIT_MS_DEFAULT;
-}
 
 const ACTIONS = ["definition", "references", "hover", "symbols", "diagnostics", "workspace-diagnostics", "signature", "rename", "codeAction"] as const;
 const SEVERITY_FILTERS = ["all", "error", "warning", "info", "hint"] as const;
@@ -266,7 +257,7 @@ Use bash to find files: find src -name "*.ts" -type f`,
             return { content: [{ type: "text", text: `action: symbols\n${qLine}${payload}` }], details: symbols };
           }
           case "diagnostics": {
-            const result = await abortable(manager.touchFileAndWait(file!, diagnosticsWaitMsForFile(file!)), signal);
+            const result = await abortable(manager.touchFileAndWait(file!, manager.diagnosticsWaitMsForFile(file!)), signal);
             const filtered = filterDiagnosticsBySeverity(result.diagnostics, sevFilter);
             const payload = (result as any).unsupported
               ? `Unsupported: ${(result as any).error || "No LSP for this file."}`
@@ -277,7 +268,7 @@ Use bash to find files: find src -name "*.ts" -type f`,
           }
           case "workspace-diagnostics": {
             if (!files?.length) throw new Error('Action "workspace-diagnostics" requires a "files" array.');
-            const waitMs = Math.max(...files.map(diagnosticsWaitMsForFile));
+            const waitMs = Math.max(...files.map((item) => manager.diagnosticsWaitMsForFile(item)));
             const result = await abortable(manager.getDiagnosticsForFiles(files, waitMs), signal);
             const out: string[] = [];
             let errors = 0, warnings = 0, filesWithIssues = 0;

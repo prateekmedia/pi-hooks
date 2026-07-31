@@ -8,19 +8,20 @@ Language Server Protocol integration for pi-coding-agent.
 - **Tool** (`lsp-tool.ts`): On-demand LSP queries (definitions, references, hover, symbols, diagnostics, signatures)
 - Manages one LSP server per project root and reuses them across turns
 - **Efficient**: Bounded memory usage via LRU cache and idle file cleanup
-- Supports TypeScript/JavaScript, Vue, Svelte, Dart/Flutter, Python, Go, Kotlin, Swift, and Rust
+- Supports TypeScript/JavaScript, C/C++, Vue, Svelte, Dart/Flutter, Python, Go, Kotlin, Swift, and Rust
 
 ## Supported Languages
 
 | Language | Server | Detection |
 |----------|--------|-----------|
-| TypeScript/JavaScript | `typescript-language-server` | `package.json`, `tsconfig.json` |
+| TypeScript/JavaScript | `typescript-language-server` | `package.json`, `tsconfig.json`, `jsconfig.json` |
+| C/C++ | `clangd --background-index` | nearest `compile_commands.json`, `.clangd`, `CMakeLists.txt` |
 | Vue | `vue-language-server` | `package.json`, `vite.config.ts` |
 | Svelte | `svelteserver` | `svelte.config.js` |
 | Dart/Flutter | `dart language-server` | `pubspec.yaml` |
 | Python | `pyright-langserver` | `pyproject.toml`, `requirements.txt` |
 | Go | `gopls` | `go.mod` |
-| Kotlin | `kotlin-ls` | `settings.gradle(.kts)`, `build.gradle(.kts)`, `pom.xml` |
+| Kotlin | `kotlin-lsp` (fallback: `kotlin-language-server`) | `settings.gradle(.kts)`, `build.gradle(.kts)`, `pom.xml` |
 | Swift | `sourcekit-lsp` | `Package.swift`, Xcode (`*.xcodeproj` / `*.xcworkspace`) |
 | Rust | `rust-analyzer` | `Cargo.toml` |
 
@@ -48,6 +49,9 @@ Install the language servers you need:
 # TypeScript/JavaScript
 npm i -g typescript-language-server typescript
 
+# C/C++
+# Install clangd from your platform's LLVM package.
+
 # Vue
 npm i -g @vue/language-server
 
@@ -60,7 +64,7 @@ npm i -g pyright
 # Go (install gopls via go install)
 go install golang.org/x/tools/gopls@latest
 
-# Kotlin (kotlin-ls)
+# Kotlin (kotlin-lsp)
 brew install JetBrains/utils/kotlin-lsp
 
 # Swift (sourcekit-lsp; macOS)
@@ -146,7 +150,54 @@ To disable auto diagnostics, choose "Disabled" in `/lsp` or set in `~/.pi/agent/
 ```
 Other values: `"agent_end"` (default) and `"edit_write"`.
 
-Agent-end mode analyzes files touched during the full agent response (after all tool calls complete) and posts a diagnostics message only once. Disabling the hook does not disable the `/lsp` tool.
+Agent-end mode analyzes files touched during the full agent response (after all tool calls complete) and posts a diagnostics message only once. Disabling the hook does not disable the model-facing `lsp` tool.
+
+### Language server configuration
+
+Builtins are the defaults. Optional JSON configuration is read from:
+
+- Global: `${PI_CODING_AGENT_DIR:-~/.pi/agent}/lsp.json`
+- Project: `.pi/lsp.json` (Pi's configured project directory name is used at runtime)
+
+Neither file is created automatically. The global file can override builtins or add servers:
+
+```json
+{
+  "servers": {
+    "clangd": {
+      "args": ["--background-index", "--clang-tidy"],
+      "diagnosticsWaitMs": 5000
+    },
+    "example-ls": {
+      "command": "example-language-server",
+      "args": ["--stdio"],
+      "extensions": [".example"],
+      "rootMarkers": ["example.toml"],
+      "languageIds": { ".example": "example" },
+      "initializationOptions": { "feature": true }
+    }
+  }
+}
+```
+
+Global server fields are `command`, `args`, `extensions`, `rootMarkers`, `languageIds`, `initializationOptions`, `diagnosticsWaitMs`, and `disabled`. A new server requires `command`, nonempty dot-prefixed `extensions`, and nonempty `rootMarkers`. Extensions and language-ID keys are normalized to lowercase. `command` must be a bare executable name resolved from `PATH` or an absolute path.
+
+Dart/Flutter, TypeScript, Kotlin, and Swift have builtin executable discovery or fallbacks. Overriding their `command` or `args` switches to the configured command directly; Pi reports a configuration warning when this happens.
+
+Project configuration is intentionally tuning-only. For an existing builtin or global server it may set only:
+
+```json
+{
+  "servers": {
+    "clangd": { "diagnosticsWaitMs": 10000 },
+    "rust-analyzer": { "disabled": true }
+  }
+}
+```
+
+A project cannot add a server, change its executable, arguments, extensions, roots, language IDs, or initialization options, and cannot re-enable a globally disabled server. `diagnosticsWaitMs` is clamped to 250–60000 ms. Invalid JSON or invalid entries are ignored without disabling builtins.
+
+**Safety model:** commands are spawned directly without a shell. Configuration never installs or downloads servers, runs installer commands, reads an environment-variable command map, or writes scaffolding. Prototype-pollution keys are rejected. Project restrictions apply regardless of project trust.
 
 ## File Structure
 
@@ -154,7 +205,8 @@ Agent-end mode analyzes files touched during the full agent response (after all 
 |------|---------|
 | `lsp.ts` | Hook extension (auto-diagnostics; default at agent end) |
 | `lsp-tool.ts` | Tool extension (on-demand LSP queries) |
-| `lsp-core.ts` | LSPManager class, server configs, singleton manager |
+| `lsp-core.ts` | LSPManager class, builtin server definitions, singleton manager |
+| `lsp-config.ts` | Safe global/project configuration resolver |
 | `package.json` | Declares both extensions via "pi" field |
 
 ## Testing

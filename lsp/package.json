@@ -1,9 +1,10 @@
 {
   "name": "lsp-pi",
   "version": "1.0.5",
-  "description": "LSP extension for pi-coding-agent - provides language server tool and diagnostics feedback for Dart/Flutter, TypeScript, Vue, Svelte, Python, Go, Kotlin, Swift, Rust",
+  "description": "LSP extension for pi-coding-agent - one unified LSP tool plus automatic diagnostics for TypeScript, C/C++, Dart, Python, Go, Kotlin, Swift, Rust, Vue, and Svelte",
   "scripts": {
-    "test": "npx tsx tests/lsp.test.ts",
+    "test": "npx tsx tests/lsp.test.ts && npx tsx tests/lsp-config.test.ts",
+    "typecheck": "tsc -p tsconfig.json",
     "test:tool": "npx tsx tests/index.test.ts",
     "test:integration": "npx tsx tests/lsp-integration.test.ts",
     "test:all": "npm test && npm run test:tool && npm run test:integration"
@@ -21,12 +22,24 @@
     "kotlin",
     "swift",
     "rust",
+    "c",
+    "cpp",
+    "clangd",
     "pi-coding-agent",
     "extension",
     "pi-package"
   ],
   "author": "",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/prateekmedia/pi-hooks.git",
+    "directory": "lsp"
+  },
+  "homepage": "https://github.com/prateekmedia/pi-hooks/tree/main/lsp#readme",
+  "bugs": {
+    "url": "https://github.com/prateekmedia/pi-hooks/issues"
+  },
   "type": "module",
   "pi": {
     "extensions": [
@@ -35,12 +48,12 @@
     ]
   },
   "dependencies": {
-    "vscode-languageserver-protocol": "^3.17.5"
+    "vscode-languageserver-protocol": "^3.18.0"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "^0.74.0",
-    "@earendil-works/pi-coding-agent": "^0.74.0",
-    "@earendil-works/pi-tui": "^0.74.0"
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "^0.74.0",
