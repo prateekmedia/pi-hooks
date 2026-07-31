@@ -6,7 +6,7 @@
   "keywords": ["pi-package", "pi", "pi-coding-agent"],
   "dependencies": {
     "shell-quote": "^1.8.3",
-    "vscode-languageserver-protocol": "^3.17.5"
+    "vscode-languageserver-protocol": "^3.18.0"
   },
   "pi": {
     "extensions": [

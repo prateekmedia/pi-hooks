@@ -4,8 +4,15 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import * as path from "node:path";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import { pathToFileURL, fileURLToPath } from "node:url";
+import * as PiCodingAgent from "@earendil-works/pi-coding-agent";
+import {
+  defaultGlobalLSPConfigPath,
+  resolveLSPConfig,
+  type LSPConfigWarning,
+  type LSPServerDefinition,
+  type ResolvedLSPServerConfig,
+} from "./lsp-config.js";
 import {
   createMessageConnection,
   StreamMessageReader,
@@ -27,7 +34,7 @@ import {
   DocumentSymbolRequest,
   RenameRequest,
   CodeActionRequest,
-} from "vscode-languageserver-protocol/node.js";
+} from "vscode-languageserver-protocol/node";
 import {
   type Diagnostic,
   type Location,
@@ -49,6 +56,7 @@ const INIT_TIMEOUT_MS = 30000;
 const MAX_OPEN_FILES = 30;
 const IDLE_TIMEOUT_MS = 60_000;
 const CLEANUP_INTERVAL_MS = 30_000;
+const CONFIG_DIR_NAME = (PiCodingAgent as unknown as { CONFIG_DIR_NAME?: string }).CONFIG_DIR_NAME ?? ".pi";
 
 export const LANGUAGE_IDS: Record<string, string> = {
   ".dart": "dart", ".ts": "typescript", ".tsx": "typescriptreact",
@@ -58,12 +66,13 @@ export const LANGUAGE_IDS: Record<string, string> = {
   ".py": "python", ".pyi": "python", ".go": "go", ".rs": "rust",
   ".kt": "kotlin", ".kts": "kotlin",
   ".swift": "swift",
+  ".c": "c", ".h": "c",
+  ".cc": "cpp", ".cpp": "cpp", ".cxx": "cpp",
+  ".hpp": "cpp", ".hxx": "cpp",
 };
 
 // Types
-interface LSPServerConfig {
-  id: string;
-  extensions: string[];
+export interface LSPServerConfig extends LSPServerDefinition {
   findRoot: (file: string, cwd: string) => string | undefined;
   spawn: (root: string) => Promise<{ process: ChildProcessWithoutNullStreams; initOptions?: Record<string, unknown> } | undefined>;
 }
@@ -79,6 +88,7 @@ interface LSPClient {
   stderr: string[];
   capabilities?: any;
   root: string;
+  config: ResolvedLSPServerConfig;
   closed: boolean;
 }
 
@@ -143,9 +153,20 @@ function timeout<T>(promise: Promise<T>, ms: number, name: string): Promise<T> {
   });
 }
 
-function simpleSpawn(bin: string, args: string[] = ["--stdio"]) {
+function resolveCommand(command: string): string | undefined {
+  if (path.isAbsolute(command)) {
+    try {
+      if (!fs.statSync(command).isFile()) return undefined;
+      if (process.platform !== "win32") fs.accessSync(command, fs.constants.X_OK);
+      return command;
+    } catch { return undefined; }
+  }
+  return which(command);
+}
+
+function simpleSpawn(bin: string, args: string[] = ["--stdio"]): LSPServerConfig["spawn"] {
   return async (root: string) => {
-    const cmd = which(bin);
+    const cmd = resolveCommand(bin);
     if (!cmd) return undefined;
     return { process: spawn(cmd, args, { cwd: root, stdio: ["pipe", "pipe", "pipe"] }) };
   };
@@ -245,84 +266,6 @@ function findRootSwift(file: string, cwd: string): string | undefined {
   return undefined;
 }
 
-async function runCommand(cmd: string, args: string[], cwd: string): Promise<boolean> {
-  return await new Promise((resolve) => {
-    try {
-      const p = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
-      p.on("error", () => resolve(false));
-      p.on("exit", (code) => resolve(code === 0));
-    } catch {
-      resolve(false);
-    }
-  });
-}
-
-async function ensureJetBrainsKotlinLspInstalled(): Promise<string | undefined> {
-  // Opt-in download (to avoid surprising network activity)
-  const allowDownload = process.env.PI_LSP_AUTO_DOWNLOAD_KOTLIN_LSP === "1" || process.env.PI_LSP_AUTO_DOWNLOAD_KOTLIN_LSP === "true";
-  const installDir = path.join(os.homedir(), ".pi", "agent", "lsp", "kotlin-ls");
-  const launcher = process.platform === "win32"
-    ? path.join(installDir, "kotlin-lsp.cmd")
-    : path.join(installDir, "kotlin-lsp.sh");
-
-  if (fs.existsSync(launcher)) return launcher;
-  if (!allowDownload) return undefined;
-
-  const curl = which("curl");
-  const unzip = which("unzip");
-  if (!curl || !unzip) return undefined;
-
-  try {
-    // Determine latest version
-    const res = await fetch("https://api.github.com/repos/Kotlin/kotlin-lsp/releases/latest", {
-      headers: { "User-Agent": "pi-lsp" },
-    });
-    if (!res.ok) return undefined;
-    const release: any = await res.json();
-    const versionRaw = (release?.name || release?.tag_name || "").toString();
-    const version = versionRaw.replace(/^v/, "");
-    if (!version) return undefined;
-
-    // Map platform/arch to JetBrains naming
-    const platform = process.platform;
-    const arch = process.arch;
-
-    let kotlinArch: string = arch;
-    if (arch === "arm64") kotlinArch = "aarch64";
-    else if (arch === "x64") kotlinArch = "x64";
-
-    let kotlinPlatform: string = platform;
-    if (platform === "darwin") kotlinPlatform = "mac";
-    else if (platform === "linux") kotlinPlatform = "linux";
-    else if (platform === "win32") kotlinPlatform = "win";
-
-    const supportedCombos = new Set(["mac-x64", "mac-aarch64", "linux-x64", "linux-aarch64", "win-x64", "win-aarch64"]);
-    const combo = `${kotlinPlatform}-${kotlinArch}`;
-    if (!supportedCombos.has(combo)) return undefined;
-
-    const assetName = `kotlin-lsp-${version}-${kotlinPlatform}-${kotlinArch}.zip`;
-    const url = `https://download-cdn.jetbrains.com/kotlin-lsp/${version}/${assetName}`;
-
-    fs.mkdirSync(installDir, { recursive: true });
-    const zipPath = path.join(installDir, "kotlin-lsp.zip");
-
-    const okDownload = await runCommand(curl, ["-L", "-o", zipPath, url], installDir);
-    if (!okDownload || !fs.existsSync(zipPath)) return undefined;
-
-    const okUnzip = await runCommand(unzip, ["-o", zipPath, "-d", installDir], installDir);
-    try { fs.rmSync(zipPath, { force: true }); } catch {}
-    if (!okUnzip) return undefined;
-
-    if (process.platform !== "win32") {
-      try { fs.chmodSync(launcher, 0o755); } catch {}
-    }
-
-    return fs.existsSync(launcher) ? launcher : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 async function spawnKotlinLanguageServer(root: string): Promise<ChildProcessWithoutNullStreams | undefined> {
   // Prefer JetBrains Kotlin LSP (Kotlin/kotlin-lsp) – better diagnostics for Gradle/Android projects.
   const explicit = process.env.PI_LSP_KOTLIN_LSP_PATH;
@@ -330,7 +273,7 @@ async function spawnKotlinLanguageServer(root: string): Promise<ChildProcessWith
     return spawnWithFallback(explicit, [["--stdio"]], root);
   }
 
-  const jetbrains = which("kotlin-lsp") || which("kotlin-lsp.sh") || which("kotlin-lsp.cmd") || await ensureJetBrainsKotlinLspInstalled();
+  const jetbrains = which("kotlin-lsp") || which("kotlin-lsp.sh") || which("kotlin-lsp.cmd");
   if (jetbrains) {
     return spawnWithFallback(jetbrains, [["--stdio"]], root);
   }
@@ -351,10 +294,16 @@ async function spawnSourcekitLsp(root: string): Promise<ChildProcessWithoutNullS
   return spawnWithFallback(xcrun, [["sourcekit-lsp"], ["sourcekit-lsp", "--stdio"]], root);
 }
 
-// Server Configs
+// Builtin server definitions. Keep this export stable for consumers and tests.
+function ids(extensions: string[]): Record<string, string> {
+  return Object.fromEntries(extensions.map((extension) => [extension, LANGUAGE_IDS[extension] ?? "plaintext"]));
+}
+
 export const LSP_SERVERS: LSPServerConfig[] = [
   {
-    id: "dart", extensions: [".dart"],
+    id: "dart", command: "dart", args: ["language-server", "--protocol=lsp"],
+    extensions: [".dart"], rootMarkers: ["pubspec.yaml", "analysis_options.yaml"],
+    languageIds: { ".dart": "dart" }, diagnosticsWaitMs: 3000,
     findRoot: (f, cwd) => findRoot(f, cwd, ["pubspec.yaml", "analysis_options.yaml"]),
     spawn: async (root) => {
       let dart = which("dart");
@@ -367,8 +316,8 @@ export const LSP_SERVERS: LSPServerConfig[] = [
             if (flutter) {
               const dir = path.dirname(fs.realpathSync(flutter));
               for (const p of ["cache/dart-sdk/bin/dart", "../cache/dart-sdk/bin/dart"]) {
-                const c = path.join(dir, p);
-                if (fs.existsSync(c)) { dart = c; break; }
+                const candidate = path.join(dir, p);
+                if (fs.existsSync(candidate)) { dart = candidate; break; }
               }
             }
           }
@@ -379,7 +328,10 @@ export const LSP_SERVERS: LSPServerConfig[] = [
     },
   },
   {
-    id: "typescript", extensions: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"],
+    id: "typescript", command: "typescript-language-server", args: ["--stdio"],
+    extensions: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"],
+    rootMarkers: ["package.json", "tsconfig.json", "jsconfig.json"],
+    languageIds: ids([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"]), diagnosticsWaitMs: 3000,
     findRoot: (f, cwd) => {
       if (findNearestFile(path.dirname(f), ["deno.json", "deno.jsonc"], cwd)) return undefined;
       return findRoot(f, cwd, ["package.json", "tsconfig.json", "jsconfig.json"]);
@@ -391,30 +343,87 @@ export const LSP_SERVERS: LSPServerConfig[] = [
       return { process: spawn(cmd, ["--stdio"], { cwd: root, stdio: ["pipe", "pipe", "pipe"] }) };
     },
   },
-  { id: "vue", extensions: [".vue"], findRoot: (f, cwd) => findRoot(f, cwd, ["package.json", "vite.config.ts", "vite.config.js"]), spawn: simpleSpawn("vue-language-server") },
-  { id: "svelte", extensions: [".svelte"], findRoot: (f, cwd) => findRoot(f, cwd, ["package.json", "svelte.config.js"]), spawn: simpleSpawn("svelteserver") },
-  { id: "pyright", extensions: [".py", ".pyi"], findRoot: (f, cwd) => findRoot(f, cwd, ["pyproject.toml", "setup.py", "requirements.txt", "pyrightconfig.json"]), spawn: simpleSpawn("pyright-langserver") },
-  { id: "gopls", extensions: [".go"], findRoot: (f, cwd) => findRoot(f, cwd, ["go.work"]) || findRoot(f, cwd, ["go.mod"]), spawn: simpleSpawn("gopls", []) },
   {
-    id: "kotlin", extensions: [".kt", ".kts"],
+    id: "vue", command: "vue-language-server", args: ["--stdio"], extensions: [".vue"],
+    rootMarkers: ["package.json", "vite.config.ts", "vite.config.js"], languageIds: { ".vue": "vue" }, diagnosticsWaitMs: 3000,
+    findRoot: (f, cwd) => findRoot(f, cwd, ["package.json", "vite.config.ts", "vite.config.js"]), spawn: simpleSpawn("vue-language-server"),
+  },
+  {
+    id: "svelte", command: "svelteserver", args: ["--stdio"], extensions: [".svelte"],
+    rootMarkers: ["package.json", "svelte.config.js"], languageIds: { ".svelte": "svelte" }, diagnosticsWaitMs: 3000,
+    findRoot: (f, cwd) => findRoot(f, cwd, ["package.json", "svelte.config.js"]), spawn: simpleSpawn("svelteserver"),
+  },
+  {
+    id: "pyright", command: "pyright-langserver", args: ["--stdio"], extensions: [".py", ".pyi"],
+    rootMarkers: ["pyproject.toml", "setup.py", "requirements.txt", "pyrightconfig.json"], languageIds: ids([".py", ".pyi"]), diagnosticsWaitMs: 3000,
+    findRoot: (f, cwd) => findRoot(f, cwd, ["pyproject.toml", "setup.py", "requirements.txt", "pyrightconfig.json"]), spawn: simpleSpawn("pyright-langserver"),
+  },
+  {
+    id: "gopls", command: "gopls", args: [], extensions: [".go"], rootMarkers: ["go.work", "go.mod"],
+    languageIds: { ".go": "go" }, diagnosticsWaitMs: 3000,
+    findRoot: (f, cwd) => findRoot(f, cwd, ["go.work"]) || findRoot(f, cwd, ["go.mod"]), spawn: simpleSpawn("gopls", []),
+  },
+  {
+    id: "kotlin", command: "kotlin-lsp", args: ["--stdio"], extensions: [".kt", ".kts"],
+    rootMarkers: ["settings.gradle.kts", "settings.gradle", "build.gradle.kts", "build.gradle", "gradlew", "gradlew.bat", "gradle.properties", "pom.xml"],
+    languageIds: ids([".kt", ".kts"]), diagnosticsWaitMs: 30000,
     findRoot: (f, cwd) => findRootKotlin(f, cwd),
     spawn: async (root) => {
       const proc = await spawnKotlinLanguageServer(root);
-      if (!proc) return undefined;
-      return { process: proc };
+      return proc ? { process: proc } : undefined;
     },
   },
   {
-    id: "swift", extensions: [".swift"],
+    id: "swift", command: "sourcekit-lsp", args: [], extensions: [".swift"],
+    rootMarkers: ["Package.swift"], languageIds: { ".swift": "swift" }, diagnosticsWaitMs: 20000,
     findRoot: (f, cwd) => findRootSwift(f, cwd),
     spawn: async (root) => {
       const proc = await spawnSourcekitLsp(root);
-      if (!proc) return undefined;
-      return { process: proc };
+      return proc ? { process: proc } : undefined;
     },
   },
-  { id: "rust-analyzer", extensions: [".rs"], findRoot: (f, cwd) => findRoot(f, cwd, ["Cargo.toml"]), spawn: simpleSpawn("rust-analyzer", []) },
+  {
+    id: "rust-analyzer", command: "rust-analyzer", args: [], extensions: [".rs"], rootMarkers: ["Cargo.toml"],
+    languageIds: { ".rs": "rust" }, diagnosticsWaitMs: 20000,
+    findRoot: (f, cwd) => findRoot(f, cwd, ["Cargo.toml"]), spawn: simpleSpawn("rust-analyzer", []),
+  },
+  {
+    id: "clangd", command: "clangd", args: ["--background-index"],
+    extensions: [".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hxx"],
+    rootMarkers: ["compile_commands.json", ".clangd", "CMakeLists.txt"],
+    languageIds: ids([".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hxx"]), diagnosticsWaitMs: 3000,
+    findRoot: (f, cwd) => findRoot(f, cwd, ["compile_commands.json", ".clangd", "CMakeLists.txt"]),
+    spawn: simpleSpawn("clangd", ["--background-index"]),
+  },
 ];
+
+type RuntimeServerConfig = ResolvedLSPServerConfig & Pick<LSPServerConfig, "findRoot" | "spawn">;
+
+function runtimeServerConfig(resolved: ResolvedLSPServerConfig): RuntimeServerConfig {
+  const builtin = resolved.builtin ? LSP_SERVERS.find((server) => server.id === resolved.id) : undefined;
+  const useBuiltinRoot = builtin && !resolved.globalOverrides.has("rootMarkers");
+  const useBuiltinSpawn = builtin
+    && !resolved.globalOverrides.has("command")
+    && !resolved.globalOverrides.has("args");
+
+  const baseSpawn = useBuiltinSpawn ? builtin.spawn : simpleSpawn(resolved.command, resolved.args);
+  return {
+    ...resolved,
+    findRoot: useBuiltinRoot
+      ? builtin.findRoot
+      : (file, cwd) => findRoot(file, cwd, resolved.rootMarkers),
+    spawn: async (root) => {
+      const handle = await baseSpawn(root);
+      if (!handle) return undefined;
+      return {
+        process: handle.process,
+        initOptions: resolved.globalOverrides.has("initializationOptions")
+          ? resolved.initializationOptions
+          : (handle.initOptions ?? resolved.initializationOptions),
+      };
+    },
+  };
+}
 
 // Singleton Manager
 let sharedManager: LSPManager | null = null;
@@ -449,12 +458,55 @@ export class LSPManager {
   private spawning = new Map<string, Promise<LSPClient | undefined>>();
   private broken = new Set<string>();
   private cwd: string;
+  private serverConfigs: RuntimeServerConfig[];
+  private configWarnings: LSPConfigWarning[];
   private cleanupTimer: NodeJS.Timeout | null = null;
 
-  constructor(cwd: string) {
+  constructor(cwd: string, configPaths: { globalConfigPath?: string; projectConfigPath?: string } = {}) {
     this.cwd = cwd;
+    const config = resolveLSPConfig({
+      cwd,
+      builtins: LSP_SERVERS,
+      configDirName: CONFIG_DIR_NAME,
+      ...configPaths,
+    });
+    this.serverConfigs = config.servers.filter((server) => !server.disabled).map(runtimeServerConfig);
+    this.configWarnings = config.warnings;
+
+    const specialDiscoveryServers = new Set(["dart", "typescript", "kotlin", "swift"]);
+    for (const server of config.servers) {
+      if (server.builtin && specialDiscoveryServers.has(server.id)
+        && (server.globalOverrides.has("command") || server.globalOverrides.has("args"))) {
+        this.configWarnings.push({
+          path: configPaths.globalConfigPath ?? defaultGlobalLSPConfigPath(),
+          server: server.id,
+          message: "command/args override uses the configured command directly and disables builtin executable discovery/fallbacks",
+        });
+      }
+    }
     this.cleanupTimer = setInterval(() => this.cleanupIdleFiles(), CLEANUP_INTERVAL_MS);
     this.cleanupTimer.unref();
+  }
+
+  getConfigWarnings(): readonly LSPConfigWarning[] { return this.configWarnings; }
+
+  getServerConfigs(): readonly ResolvedLSPServerConfig[] { return this.serverConfigs; }
+
+  getServersForFile(filePath: string): readonly ResolvedLSPServerConfig[] {
+    const extension = path.extname(filePath).toLowerCase();
+    return this.serverConfigs.filter((server) => server.extensions.includes(extension));
+  }
+
+  getServerForFile(filePath: string): ResolvedLSPServerConfig | undefined {
+    return this.getServersForFile(filePath)[0];
+  }
+
+  diagnosticsWaitMsForFile(filePath: string): number {
+    const extension = path.extname(filePath).toLowerCase();
+    const waits = this.serverConfigs
+      .filter((server) => server.extensions.includes(extension))
+      .map((server) => server.diagnosticsWaitMs);
+    return waits.length ? Math.max(...waits) : 3000;
   }
 
   private cleanupIdleFiles() {
@@ -488,7 +540,7 @@ export class LSPManager {
 
   private key(id: string, root: string) { return `${id}:${root}`; }
 
-  private async initClient(config: LSPServerConfig, root: string): Promise<LSPClient | undefined> {
+  private async initClient(config: RuntimeServerConfig, root: string): Promise<LSPClient | undefined> {
     const k = this.key(config.id, root);
     try {
       const handle = await config.spawn(root);
@@ -526,6 +578,7 @@ export class LSPManager {
         listeners: new Map(),
         stderr,
         root,
+        config,
         closed: false,
       };
 
@@ -585,12 +638,12 @@ export class LSPManager {
   }
 
   async getClientsForFile(filePath: string): Promise<LSPClient[]> {
-    const ext = path.extname(filePath);
+    const ext = path.extname(filePath).toLowerCase();
     const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(this.cwd, filePath);
     const clients: LSPClient[] = [];
 
-    for (const config of LSP_SERVERS) {
-      if (!config.extensions.includes(ext)) continue;
+    for (const config of this.serverConfigs) {
+      if (!config.extensions.includes(ext.toLowerCase())) continue;
       const root = config.findRoot(absPath, this.cwd);
       if (!root) continue;
       const k = this.key(config.id, root);
@@ -614,7 +667,10 @@ export class LSPManager {
     const abs = path.isAbsolute(fp) ? fp : path.resolve(this.cwd, fp);
     return normalizeFsPath(abs);
   }
-  private langId(fp: string) { return LANGUAGE_IDS[path.extname(fp)] || "plaintext"; }
+  private langId(client: LSPClient, fp: string) {
+    const extension = path.extname(fp).toLowerCase();
+    return client.config.languageIds[extension] ?? LANGUAGE_IDS[extension] ?? "plaintext";
+  }
   private readFile(fp: string): string | null { try { return fs.readFileSync(fp, "utf-8"); } catch { return null; } }
 
   private explainNoLsp(absPath: string): string {
@@ -675,9 +731,10 @@ export class LSPManager {
     return result as DocumentSymbol[];
   }
 
-  private async openOrUpdate(clients: LSPClient[], absPath: string, uri: string, langId: string, content: string, evict = true) {
+  private async openOrUpdate(clients: LSPClient[], absPath: string, uri: string, content: string, evict = true) {
     const now = Date.now();
     for (const client of clients) {
+      const langId = this.langId(client, absPath);
       if (client.closed) continue;
       const state = client.openFiles.get(absPath);
       try {
@@ -713,7 +770,7 @@ export class LSPManager {
     if (!clients.length) return null;
     const content = this.readFile(absPath);
     if (content === null) return null;
-    return { clients, absPath, uri: pathToFileURL(absPath).href, langId: this.langId(absPath), content };
+    return { clients, absPath, uri: pathToFileURL(absPath).href, content };
   }
 
   private waitForDiagnostics(client: LSPClient, absPath: string, timeoutMs: number, isNew: boolean): Promise<boolean> {
@@ -832,11 +889,10 @@ export class LSPManager {
     }
 
     const uri = pathToFileURL(absPath).href;
-    const langId = this.langId(absPath);
     const isNew = clients.some(c => !c.openFiles.has(absPath));
 
     const waits = clients.map(c => this.waitForDiagnostics(c, absPath, timeoutMs, isNew));
-    await this.openOrUpdate(clients, absPath, uri, langId, content);
+    await this.openOrUpdate(clients, absPath, uri, content);
     const results = await Promise.all(waits);
 
     let responded = results.some(r => r);
@@ -890,7 +946,6 @@ export class LSPManager {
       }
 
       const uri = pathToFileURL(absPath).href;
-      const langId = this.langId(absPath);
       const isNew = clients.some(c => !c.openFiles.has(absPath));
 
       for (const c of clients) {
@@ -901,7 +956,7 @@ export class LSPManager {
       }
 
       const waits = clients.map(c => this.waitForDiagnostics(c, absPath, timeoutMs, isNew));
-      await this.openOrUpdate(clients, absPath, uri, langId, content, false);
+      await this.openOrUpdate(clients, absPath, uri, content, false);
       const waitResults = await Promise.all(waits);
 
       const diags: Diagnostic[] = [];
@@ -938,7 +993,7 @@ export class LSPManager {
   async getDefinition(fp: string, line: number, col: number): Promise<Location[]> {
     const l = await this.loadFile(fp);
     if (!l) return [];
-    await this.openOrUpdate(l.clients, l.absPath, l.uri, l.langId, l.content);
+    await this.openOrUpdate(l.clients, l.absPath, l.uri, l.content);
     const pos = this.toPos(line, col);
     const results = await Promise.all(l.clients.map(async c => {
       if (c.closed) return [];
@@ -951,7 +1006,7 @@ export class LSPManager {
   async getReferences(fp: string, line: number, col: number): Promise<Location[]> {
     const l = await this.loadFile(fp);
     if (!l) return [];
-    await this.openOrUpdate(l.clients, l.absPath, l.uri, l.langId, l.content);
+    await this.openOrUpdate(l.clients, l.absPath, l.uri, l.content);
     const pos = this.toPos(line, col);
     const results = await Promise.all(l.clients.map(async c => {
       if (c.closed) return [];
@@ -964,7 +1019,7 @@ export class LSPManager {
   async getHover(fp: string, line: number, col: number): Promise<Hover | null> {
     const l = await this.loadFile(fp);
     if (!l) return null;
-    await this.openOrUpdate(l.clients, l.absPath, l.uri, l.langId, l.content);
+    await this.openOrUpdate(l.clients, l.absPath, l.uri, l.content);
     const pos = this.toPos(line, col);
     for (const c of l.clients) {
       if (c.closed) continue;
@@ -977,7 +1032,7 @@ export class LSPManager {
   async getSignatureHelp(fp: string, line: number, col: number): Promise<SignatureHelp | null> {
     const l = await this.loadFile(fp);
     if (!l) return null;
-    await this.openOrUpdate(l.clients, l.absPath, l.uri, l.langId, l.content);
+    await this.openOrUpdate(l.clients, l.absPath, l.uri, l.content);
     const pos = this.toPos(line, col);
     for (const c of l.clients) {
       if (c.closed) continue;
@@ -990,7 +1045,7 @@ export class LSPManager {
   async getDocumentSymbols(fp: string): Promise<DocumentSymbol[]> {
     const l = await this.loadFile(fp);
     if (!l) return [];
-    await this.openOrUpdate(l.clients, l.absPath, l.uri, l.langId, l.content);
+    await this.openOrUpdate(l.clients, l.absPath, l.uri, l.content);
     const results = await Promise.all(l.clients.map(async c => {
       if (c.closed) return [];
       try { return this.normalizeSymbols(await c.connection.sendRequest(DocumentSymbolRequest.type, { textDocument: { uri: l.uri } })); }
@@ -1002,7 +1057,7 @@ export class LSPManager {
   async rename(fp: string, line: number, col: number, newName: string): Promise<WorkspaceEdit | null> {
     const l = await this.loadFile(fp);
     if (!l) return null;
-    await this.openOrUpdate(l.clients, l.absPath, l.uri, l.langId, l.content);
+    await this.openOrUpdate(l.clients, l.absPath, l.uri, l.content);
     const pos = this.toPos(line, col);
     for (const c of l.clients) {
       if (c.closed) continue;
@@ -1021,7 +1076,7 @@ export class LSPManager {
   async getCodeActions(fp: string, startLine: number, startCol: number, endLine?: number, endCol?: number): Promise<(CodeAction | Command)[]> {
     const l = await this.loadFile(fp);
     if (!l) return [];
-    await this.openOrUpdate(l.clients, l.absPath, l.uri, l.langId, l.content);
+    await this.openOrUpdate(l.clients, l.absPath, l.uri, l.content);
     
     const start = this.toPos(startLine, startCol);
     const end = this.toPos(endLine ?? startLine, endCol ?? startCol);

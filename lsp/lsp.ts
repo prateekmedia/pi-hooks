@@ -17,20 +17,11 @@ import * as os from "node:os";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { type Diagnostic } from "vscode-languageserver-protocol";
-import { LSP_SERVERS, formatDiagnostic, getOrCreateManager, shutdownManager } from "./lsp-core.js";
+import { formatDiagnostic, getOrCreateManager, shutdownManager } from "./lsp-core.js";
 
 type HookScope = "session" | "global";
 type HookMode = "edit_write" | "agent_end" | "disabled";
 
-const DIAGNOSTICS_WAIT_MS_DEFAULT = 3000;
-
-function diagnosticsWaitMsForFile(filePath: string): number {
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext === ".kt" || ext === ".kts") return 30000;
-  if (ext === ".swift") return 20000;
-  if (ext === ".rs") return 20000;
-  return DIAGNOSTICS_WAIT_MS_DEFAULT;
-}
 const DIAGNOSTICS_PREVIEW_LINES = 10;
 const LSP_IDLE_SHUTDOWN_MS = 2 * 60 * 1000;
 const DIM = "\x1b[2m", GREEN = "\x1b[32m", YELLOW = "\x1b[33m", RESET = "\x1b[0m";
@@ -52,6 +43,9 @@ const WARMUP_MAP: Record<string, string> = {
   "gradlew": ".kt",
   "gradle.properties": ".kt",
   "Package.swift": ".swift",
+  "compile_commands.json": ".cpp",
+  ".clangd": ".cpp",
+  "CMakeLists.txt": ".cpp",
 };
 
 const MODE_LABELS: Record<HookMode, string> = {
@@ -271,20 +265,19 @@ export default function (pi: ExtensionAPI) {
     return new Text(styledLines.join("\n"), 0, 0);
   });
 
-  function getServerConfig(filePath: string) {
-    const ext = path.extname(filePath);
-    return LSP_SERVERS.find((s) => s.extensions.includes(ext));
-  }
-
   function ensureActiveClientForFile(filePath: string, cwd: string): string | undefined {
     const absPath = normalizeFilePath(filePath, cwd);
-    const cfg = getServerConfig(absPath);
-    if (!cfg) return undefined;
+    const configs = getOrCreateManager(cwd).getServersForFile(absPath);
+    if (!configs.length) return undefined;
 
-    if (!activeClients.has(cfg.id)) {
-      activeClients.add(cfg.id);
-      updateLspStatus();
+    let changed = false;
+    for (const cfg of configs) {
+      if (!activeClients.has(cfg.id)) {
+        activeClients.add(cfg.id);
+        changed = true;
+      }
     }
+    if (changed) updateLspStatus();
 
     return absPath;
   }
@@ -315,7 +308,8 @@ export default function (pi: ExtensionAPI) {
     const MAX = 5;
     const lines = diagnostics.slice(0, MAX).map((e) => {
       const sev = e.severity === 1 ? "ERROR" : "WARN";
-      return `${sev}[${e.range.start.line + 1}] ${e.message.split("\n")[0]}`;
+      const message = typeof e.message === "string" ? e.message : e.message.value;
+      return `${sev}[${e.range.start.line + 1}] ${message.split("\n")[0]}`;
     });
 
     let notification = `📋 ${relativePath}\n${lines.join("\n")}`;
@@ -339,7 +333,7 @@ export default function (pi: ExtensionAPI) {
     if (!absPath) return undefined;
 
     try {
-      const result = await manager.touchFileAndWait(absPath, diagnosticsWaitMsForFile(absPath));
+      const result = await manager.touchFileAndWait(absPath, manager.diagnosticsWaitMsForFile(absPath));
       if (!result.receivedResponse) return undefined;
 
       const diagnostics = includeWarnings
@@ -431,6 +425,18 @@ export default function (pi: ExtensionAPI) {
     if (hookMode === "disabled") return;
 
     const manager = getOrCreateManager(ctx.cwd);
+    const configWarnings = manager.getConfigWarnings();
+    for (const warning of configWarnings.slice(0, 5)) {
+      const server = warning.server ? ` [${warning.server}]` : "";
+      const message = `LSP config${server}: ${warning.message}`;
+      if (ctx.hasUI) ctx.ui.notify(message, "warning");
+      else console.error(message);
+    }
+    if (configWarnings.length > 5) {
+      const message = `LSP config: ${configWarnings.length - 5} more warning(s)`;
+      if (ctx.hasUI) ctx.ui.notify(message, "warning");
+      else console.error(message);
+    }
 
     for (const [marker, ext] of Object.entries(WARMUP_MAP)) {
       if (fs.existsSync(path.join(ctx.cwd, marker))) {
@@ -438,7 +444,7 @@ export default function (pi: ExtensionAPI) {
         manager.getClientsForFile(path.join(ctx.cwd, `dummy${ext}`))
           .then((clients) => {
             if (clients.length > 0) {
-              const cfg = LSP_SERVERS.find((s) => s.extensions.includes(ext));
+              const cfg = manager.getServerForFile(`dummy${ext}`);
               if (cfg) activeClients.add(cfg.id);
             }
           })
@@ -449,17 +455,7 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  pi.on("session_switch", async (_event, ctx) => {
-    restoreHookState(ctx);
-    updateLspStatus();
-  });
-
   pi.on("session_tree", async (_event, ctx) => {
-    restoreHookState(ctx);
-    updateLspStatus();
-  });
-
-  pi.on("session_fork", async (_event, ctx) => {
     restoreHookState(ctx);
     updateLspStatus();
   });
@@ -578,14 +574,13 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("tool_result", async (event, ctx) => {
     if (event.toolName !== "write" && event.toolName !== "edit") return;
+    if (hookMode === "disabled") return;
 
     const filePath = event.input.path as string;
     if (!filePath) return;
 
     const absPath = ensureActiveClientForFile(filePath, ctx.cwd);
     if (!absPath) return;
-
-    if (hookMode === "disabled") return;
 
     if (hookMode === "agent_end") {
       const includeWarnings = event.toolName === "write";

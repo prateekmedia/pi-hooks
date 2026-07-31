@@ -113,6 +113,14 @@ test("LANGUAGE_IDS: Python extensions", async () => {
   assertEquals(LANGUAGE_IDS[".pyi"], "python", ".pyi should map to python");
 });
 
+test("LANGUAGE_IDS: clangd distinguishes C and C++", async () => {
+  assertEquals(LANGUAGE_IDS[".c"], "c", ".c should map to c");
+  assertEquals(LANGUAGE_IDS[".h"], "c", ".h should map to c");
+  for (const ext of [".cc", ".cpp", ".cxx", ".hpp", ".hxx"]) {
+    assertEquals(LANGUAGE_IDS[ext], "cpp", `${ext} should map to cpp`);
+  }
+});
+
 test("LANGUAGE_IDS: Vue/Svelte/Astro extensions", async () => {
   assertEquals(LANGUAGE_IDS[".vue"], "vue", ".vue should map to vue");
   assertEquals(LANGUAGE_IDS[".svelte"], "svelte", ".svelte should map to svelte");
@@ -168,6 +176,44 @@ test("LSP_SERVERS: has Pyright server", async () => {
   assert(server !== undefined, "Should have pyright server");
   assertIncludes(server!.extensions, ".py", "Should handle .py");
   assertIncludes(server!.extensions, ".pyi", "Should handle .pyi");
+});
+
+test("LSP_SERVERS: has clangd with all C/C++ extensions and background index", async () => {
+  const server = LSP_SERVERS.find(s => s.id === "clangd");
+  assert(server !== undefined, "Should have clangd server");
+  for (const ext of [".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hxx"]) {
+    assertIncludes(server!.extensions, ext, `clangd should handle ${ext}`);
+  }
+  assertIncludes(server!.args, "--background-index", "clangd should enable background indexing");
+});
+
+// ============================================================================
+// clangd root detection tests
+// ============================================================================
+
+test("clangd: finds nearest compile_commands.json", async () => {
+  await withTempDir({
+    "CMakeLists.txt": "project(root)",
+    "lib/compile_commands.json": "[]",
+    "lib/src/main.cpp": "int main() {}",
+  }, async (dir) => {
+    const server = LSP_SERVERS.find(s => s.id === "clangd")!;
+    assertEquals(server.findRoot(join(dir, "lib/src/main.cpp"), dir), join(dir, "lib"), "Should use nearest compilation database");
+  });
+});
+
+test("clangd: finds .clangd or CMakeLists.txt and stays within cwd", async () => {
+  await withTempDir({
+    ".clangd": "CompileFlags: {}",
+    "nested/CMakeLists.txt": "project(nested)",
+    "nested/include/api.hpp": "void api();",
+    "outside/project/src/file.c": "int x;",
+  }, async (dir) => {
+    const server = LSP_SERVERS.find(s => s.id === "clangd")!;
+    assertEquals(server.findRoot(join(dir, "nested/include/api.hpp"), dir), join(dir, "nested"), "Should use nearest CMake marker");
+    const cwd = join(dir, "outside/project");
+    assertEquals(server.findRoot(join(cwd, "src/file.c"), cwd), undefined, "Should not search above cwd");
+  });
 });
 
 // ============================================================================
